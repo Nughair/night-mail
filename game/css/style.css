@@ -1,0 +1,43 @@
+/* Night Mail page shell: the canvas is a fixed 1280x720 stage, centred on a deep-night page
+   background and scaled down (never up past its own size) to fit smaller windows. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #05070f;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#stage {
+  line-height: 0;
+}
+
+#game {
+  width: min(100vw, 1280px);
+  height: auto;
+  max-height: 100vh;
+  display: block;
+  background: #0a1030;
+  box-shadow: 0 0 90px rgba(20, 32, 90, 0.55);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Read aloud, never shown: the line screen readers announce. */
+#status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
