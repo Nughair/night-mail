@@ -1,5 +1,6 @@
-// Night Mail's tuning: the stage size, the paper plane's physics, the shape of a night and how
-// each new night gets harder. Everything the other modules need to agree on lives here.
+// Night Mail's tuning: the stage size, the paper plane's physics and the scoring. The
+// campaign's shape — the routes, their quotas and weather, and the upgrades — lives in
+// campaign.js; everything the other modules need to agree on lives in one of the two.
 
 /** The logical stage every module draws and simulates in; the canvas is exactly this size. */
 export const VIEW = { width: 1280, height: 720 };
@@ -12,7 +13,7 @@ export const PLANE_X = 300;
 
 /** The plane's collision circle and the reach that counts as slipping a letter through a window. */
 export const PLANE_RADIUS = 13;
-export const DELIVERY_REACH = 38;
+export const DELIVERY_REACH = 44;
 
 /**
  * How far below a roofline the solid part of a building starts. The band above it — the top
@@ -28,17 +29,8 @@ export const DIVE = 700;
 export const MAX_RISE = -300;
 export const MAX_FALL = 265;
 
-/** The scroll speed of the first night and what each later night adds, in pixels a second. */
+/** The scroll speed of the first route, in pixels a second; each route adds its own. */
 export const BASE_SPEED = 275;
-export const SPEED_PER_NIGHT = 48;
-
-/** A night lasts this long; the moon crossing the sky is its clock. */
-export const NIGHT_SECONDS = 52;
-
-/** Deliveries that complete a night: the quota grows by one each night. */
-export function nightQuota(night) {
-  return 3 + night;
-}
 
 /** Points: a delivery pays the base times the combo multiplier; the rest are flat bonuses. */
 export const DELIVERY_BASE = 100;
@@ -47,13 +39,10 @@ export const COMBO_MAX = 8;
 export const NEAR_MISS_POINTS = 25;
 export const NIGHT_BONUS = 250;
 
-/** Wind gusts: how often they may come, how long they blow and how hard, by night. */
+/** Wind gusts: how often they may come and how long they blow; routes scale both. */
 export const GUST_EVERY_MIN = 7;
 export const GUST_EVERY_MAX = 13;
 export const GUST_SECONDS = 2.6;
-export function gustStrength(night) {
-  return 240 + 60 * night;
-}
 
 /** The deep-night palette with warm gold windows, shared by every drawing routine. */
 export const COLORS = {

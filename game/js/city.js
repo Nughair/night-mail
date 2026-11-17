@@ -13,10 +13,13 @@ const WINDOW_H = 17;
 export function createCity(rng) {
   const buildings = [];
   let nextX = -240;
+  // How tightly the skyline is packed, set per campaign route: past 1 the gaps between
+  // buildings shrink and the roofs creep up, so later districts crowd the plane's lane.
+  let density = 1;
 
   function makeBuilding(x) {
     const w = rng.range(98, 178);
-    const topY = rng.range(390, 586);
+    const topY = rng.range(390, 586) - (density - 1) * 55;
     const cols = Math.max(2, Math.floor((w - 30) / WINDOW_STEP_X));
     const rows = Math.max(2, Math.floor((VIEW.height - topY - 44) / WINDOW_STEP_Y));
     const windows = [];
@@ -75,7 +78,7 @@ export function createCity(rng) {
     while (nextX < cameraX + VIEW.width + 480) {
       const building = makeBuilding(nextX);
       buildings.push(building);
-      nextX += building.w + rng.range(14, 54);
+      nextX += building.w + rng.range(14, 54) / density;
     }
     while (buildings.length > 0 && buildings[0].x + buildings[0].w < cameraX - 300) {
       buildings.shift();
@@ -143,7 +146,12 @@ export function createCity(rng) {
     ensure(0);
   }
 
+  /** Set how tightly the skyline packs itself from the next building on (see ROUTES). */
+  function setDensity(value) {
+    density = value;
+  }
+
   reset();
 
-  return { buildings, ensure, reset, windowRect, solidRects, chooseTarget, clearTarget };
+  return { buildings, ensure, reset, setDensity, windowRect, solidRects, chooseTarget, clearTarget };
 }

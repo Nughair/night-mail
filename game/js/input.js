@@ -8,10 +8,14 @@ export const ACTION_MUTE = 4;
 const CLIMB_CODES = new Set(['ArrowUp', 'KeyW', 'Space']);
 const DIVE_CODES = new Set(['ArrowDown', 'KeyS']);
 
+const PICK_CODES = new Map([['Digit1', 0], ['Digit2', 1], ['Digit3', 2], ['Numpad1', 0], ['Numpad2', 1], ['Numpad3', 2]]);
+
 export function createInput(canvas) {
   const held = new Set();
   let pointerHeld = false;
   let queued = 0;
+  const picks = [];
+  let click = null;
 
   function onKeyDown(event) {
     if (CLIMB_CODES.has(event.code) || DIVE_CODES.has(event.code) || event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
@@ -22,6 +26,7 @@ export function createInput(canvas) {
     if (event.code === 'Enter' || event.code === 'Space') queued |= ACTION_CONFIRM;
     if (event.code === 'KeyP' || event.code === 'Escape') queued |= ACTION_PAUSE;
     if (event.code === 'KeyM') queued |= ACTION_MUTE;
+    if (PICK_CODES.has(event.code)) picks.push(PICK_CODES.get(event.code));
   }
 
   function onKeyUp(event) {
@@ -32,6 +37,15 @@ export function createInput(canvas) {
     event.preventDefault();
     pointerHeld = true;
     queued |= ACTION_CONFIRM;
+    // Where on the stage the click fell, in the canvas's own 1280x720 coordinates:
+    // the draft screen hit-tests its cards against this.
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      click = {
+        x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+        y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+      };
+    }
   }
 
   function onPointerUp() {
@@ -67,6 +81,18 @@ export function createInput(canvas) {
       const actions = queued;
       queued = 0;
       return actions;
+    },
+    /** Take the queued draft picks (card indices from the number keys), clearing them. */
+    takePicks() {
+      const taken = picks.slice();
+      picks.length = 0;
+      return taken;
+    },
+    /** Take the last click's stage coordinates, or null when there was none. */
+    takeClick() {
+      const taken = click;
+      click = null;
+      return taken;
     },
     dispose() {
       window.removeEventListener('keydown', onKeyDown);
