@@ -21,7 +21,7 @@ export const MEDAL_COLORS = { bronze: '#d08a4e', silver: '#cfd6ea', gold: '#ffcf
  * against the autopilot's crossings (shots.js): a careful pilot golds the routes it
  * flies cleanly, silvers the scrappy ones, and a poor crossing earns nothing.
  */
-const PAR_PER_LETTER_BY_ROUTE = [300, 380, 430, 460, 480, 520, 580, 560];
+const PAR_PER_LETTER_BY_ROUTE = [300, 380, 430, 460, 480, 520, 580, 620, 640, 660, 700, 620];
 const MEDAL_FRACTIONS = { bronze: 0.5, silver: 0.75, gold: 1.0 };
 
 /** The medal a route score earns on a route, or null when it earns none. */

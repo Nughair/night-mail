@@ -20,10 +20,12 @@ import { createCampaignRecord, medalForRoute, recordRouteResult } from './medals
 function stepForces(state) {
   const route = ROUTES[state.route];
   const tailwind = state.upgrades.includes('tailwind');
+  let gustPush = (240 + 60 * Math.min(state.route, 6)) * route.wind * (tailwind ? 2 / 3 : 1);
+  if (route.boss) gustPush *= 1 + 0.06 * state.nightDelivered;
   return {
     speed: BASE_SPEED + route.speed,
     lift: LIFT * (tailwind ? 1.2 : 1),
-    gustPush: (240 + 60 * state.route) * route.wind * (tailwind ? 2 / 3 : 1),
+    gustPush,
   };
 }
 
@@ -54,6 +56,9 @@ function planWant(state, city) {
       if (seen >= 2) break;
     }
   }
+  // The Narrows' deck: never plan a climb the cloud will not allow.
+  const deck = ROUTES[state.route].ceiling;
+  if (deck) want = Math.max(want, deck + 12);
   return Math.max(64, want);
 }
 
@@ -106,13 +111,19 @@ function policySurvival(world, wantBias, steps) {
     if (control.climb) sim.plane.vy -= forces.lift * STEP;
     if (control.dive) sim.plane.vy += DIVE * STEP;
     if (sim.gust.active) sim.plane.vy += sim.gust.dir * forces.gustPush * STEP;
-    // Rain bands push where they stand; the fronts barely drift over a replay's
-    // second, so the live system's answer at the replayed position is close enough.
-    sim.plane.vy += world.weather.pushAt(sim.cameraX + PLANE_X) * STEP;
+    // Weather pushes where it stands — rain, thermals, the beam's press; the fronts
+    // barely drift over a replay's second, so the live system's answer at the
+    // replayed position and moment is close enough.
+    sim.plane.vy += world.weather.pushAt(sim.cameraX + PLANE_X, sim.plane.y, s.time + i * STEP) * STEP;
     sim.plane.vy = Math.max(MAX_RISE, Math.min(MAX_FALL, sim.plane.vy));
     sim.plane.y += sim.plane.vy * STEP;
     if (sim.plane.y < 30) {
       sim.plane.y = 30;
+      sim.plane.vy = Math.max(sim.plane.vy, 0);
+    }
+    const deck = ROUTES[sim.route].ceiling;
+    if (deck && sim.plane.y < deck) {
+      sim.plane.y = deck;
       sim.plane.vy = Math.max(sim.plane.vy, 0);
     }
     const planeX = sim.cameraX + PLANE_X;

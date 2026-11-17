@@ -1,21 +1,25 @@
-// Night Mail's campaign: eight named routes flown in order — seven city districts of
-// rising quota, wind and rooftop density, then the Dawn Run, a storm flight against a
-// hard sunrise timer. Two districts carry weather fronts (weather.js): fog banks drift
-// the Canal District's lane, rain bands shove across the Storm Quarter. Between routes
-// the player drafts one upgrade of three; every upgrade is a real change to the flight,
-// listed in UPGRADES with the module that applies it. Win the campaign and the endless
-// Night Owl mode opens on the title screen. This file is data and layout only: the
-// world simulates it, the renderer draws it, the shell routes the player's pick back
-// into the world.
+// Night Mail's campaign: twelve named routes flown in order — eleven districts of
+// rising quota, wind and rooftop density, then the Storm Warden, a boss who keeps the
+// last window moving while his gusts grow with every letter delivered. Four districts
+// carry weather fronts (weather.js): fog banks drift the Canal District's lane, rain
+// bands shove across the Storm Quarter, the Lighthouse Coast's rotating beam presses
+// on anything it catches, and warm thermals rise over the Market District's stalls.
+// The Rooftop Gardens loose their doves at the plane, and the Narrows fly under a low
+// cloud deck that forbids climbing out. Between routes the player drafts one upgrade
+// of three; every upgrade is a real change to the flight, listed in UPGRADES with the
+// module that applies it. Win the campaign and the endless Night Owl mode opens on
+// the title screen. This file is data and layout only: the world simulates it, the
+// renderer draws it, the shell routes the player's pick back into the world.
 
 /**
  * The routes, in the order they are flown. `speed` is added to the base scroll speed,
  * `wind` multiplies gust strength and (past 1) gust frequency, `density` scales how
  * tight the skyline is packed, and `seconds` is the moon's budget before dawn ends the
- * run. `weather` names the front system a district carries ('fog' or 'rain', see
- * weather.js) and `festival` marks the one night of fireworks. The last route is the
- * finale: clear its quota before its short timer and the campaign is won; let the
- * timer die and the run ends like any dawn.
+ * run. `weather` names the front system a district carries ('fog', 'rain', 'beam' or
+ * 'thermal', see weather.js), `festival` marks the one night of fireworks, `mechanic`
+ * names a district's own hazard ('doves'), and `ceiling` caps how high the plane may
+ * climb, in stage pixels from the top. The last route is the boss: `boss` marks the
+ * Storm Warden, whose window moves and whose gusts escalate (world.js flies him).
  */
 export const ROUTES = [
   { name: 'Harbour Row', quota: 4, seconds: 56, speed: 0, wind: 0.7, density: 0.88, blurb: 'Calm air over the sleeping docks' },
@@ -25,7 +29,11 @@ export const ROUTES = [
   { name: 'Festival Quarter', quota: 7, seconds: 54, speed: 62, wind: 1.1, density: 1.14, festival: true, blurb: 'Fireworks over the fair, letters below' },
   { name: 'The Heights', quota: 7, seconds: 52, speed: 80, wind: 1.32, density: 1.2, blurb: 'High roofs and hard gusts' },
   { name: 'Storm Quarter', quota: 8, seconds: 52, speed: 98, wind: 1.45, density: 1.3, weather: 'rain', blurb: 'Rain bands sweep the rooftops' },
-  { name: 'Dawn Run', quota: 6, seconds: 42, speed: 124, wind: 1.8, density: 1.34, finale: true, blurb: 'Outrun the sunrise with the last letters' },
+  { name: 'Lighthouse Coast', quota: 7, seconds: 54, speed: 108, wind: 1.2, density: 1.24, weather: 'beam', blurb: 'The great beam sweeps the coast road' },
+  { name: 'Market District', quota: 8, seconds: 54, speed: 118, wind: 1.25, density: 1.36, weather: 'thermal', blurb: 'Warm air rises over the market stalls' },
+  { name: 'Rooftop Gardens', quota: 8, seconds: 52, speed: 128, wind: 1.35, density: 1.3, mechanic: 'doves', blurb: 'Gardens on the roofs — and doves in the lane' },
+  { name: 'The Narrows', quota: 8, seconds: 52, speed: 138, wind: 1.4, density: 1.42, ceiling: 168, blurb: 'A low cloud deck over a tight street' },
+  { name: 'The Storm Warden', quota: 7, seconds: 48, speed: 150, wind: 1.6, density: 1.27, weather: 'rain', finale: true, boss: true, blurb: 'His window moves, his gusts grow, dawn is coming' },
 ];
 
 /** The route a campaign run ends on: finishing it wins the campaign. */
@@ -33,7 +41,7 @@ export const FINAL_ROUTE = ROUTES.length - 1;
 
 /**
  * The Night Owl: the endless mode the title screen offers once the campaign is won.
- * The same eight districts cycle without end — quota and pace creeping up each loop —
+ * The same twelve districts cycle without end — quota and pace creeping up each loop —
  * with the draft after every route, until a rooftop or a dawn ends the flight. There
  * is no winning it; the score and the night count are the whole point.
  */
@@ -44,10 +52,15 @@ export const NIGHT_OWL = {
   speedPerLoop: 8,
 };
 
-/** The one-line weather warning a route's intro banner carries, or '' in clear air. */
+/** The one-line hazard warning a route's intro banner carries, or '' in plain air. */
 export function routeWeatherNote(route) {
   if (route.weather === 'fog') return 'Fog banks ahead — a window only glows when you are close.';
-  if (route.weather === 'rain') return 'Rain bands ahead — each one shoves the plane as you cross.';
+  if (route.weather === 'rain' && !route.boss) return 'Rain bands ahead — each one shoves the plane as you cross.';
+  if (route.weather === 'beam') return 'The beam presses down on whatever it catches — cross between its sweeps.';
+  if (route.weather === 'thermal') return 'Thermals ahead — warm columns that lift the plane over the stalls.';
+  if (route.mechanic === 'doves') return 'Doves ahead — a flock in the lane scatters the plane and breaks the combo.';
+  if (route.ceiling) return 'A low cloud deck — there is no climbing out; thread the porch lanes.';
+  if (route.boss) return 'The Warden’s window moves, and every letter you land makes his gusts stronger.';
   if (route.festival) return 'Fireworks tonight — keep your eyes on the gold windows.';
   return '';
 }
@@ -86,6 +99,26 @@ export function draftCardAt(x, y) {
   for (let i = 0; i < DRAFT_CARDS.length; i += 1) {
     const c = DRAFT_CARDS[i];
     if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) return i;
+  }
+  return -1;
+}
+
+/**
+ * The campaign map's route rows: twelve routes in two columns of six on the 1280x720
+ * stage. The renderer draws each route into its rectangle and the shell hit-tests
+ * clicks against the same rectangles, so what is drawn is exactly what can be picked.
+ */
+export function campaignRowRect(index) {
+  const col = index < 6 ? 0 : 1;
+  const row = index % 6;
+  return { x: 64 + col * 600, y: 196 + row * 62, w: 552, h: 56 };
+}
+
+/** Which route row, if any, a stage point falls in: a route index or -1. */
+export function campaignRowAt(x, y) {
+  for (let i = 0; i < ROUTES.length; i += 1) {
+    const r = campaignRowRect(i);
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return i;
   }
   return -1;
 }

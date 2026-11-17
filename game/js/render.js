@@ -273,7 +273,10 @@ export function createRenderer(canvas) {
   /**
    * The weather fronts, drawn where the world keeps them: a fog bank is a low wall of
    * soft, overlapping breaths that the rooftops poke out of; a rain band is a darker
-   * column of sky with its own dense slant of rain, visibly a place, not a mood.
+   * column of sky with its own dense slant of rain, visibly a place, not a mood; a
+   * thermal is a warm column of rising sparks over the market stalls; and the beam
+   * is the lighthouse itself, its rotating wedge of light drawn from the same
+   * beamInfo the world presses with, so what catches the plane is what is seen.
    */
   function drawWeatherFronts(state) {
     const weather = state.weather;
@@ -281,6 +284,30 @@ export function createRenderer(canvas) {
     for (const front of weather.fronts) {
       const fx = front.x - state.cameraX;
       if (fx + front.w < -80 || fx > W + 80) continue;
+      if (front.kind === 'beam') {
+        drawLighthouse(state, front);
+        continue;
+      }
+      if (front.kind === 'thermal') {
+        // A warm column: a soft amber wash, a brighter core, and sparks on the rise.
+        const grad = ctx.createLinearGradient(0, 250, 0, H);
+        grad.addColorStop(0, 'rgba(255,170,90,0)');
+        grad.addColorStop(0.55, 'rgba(255,170,90,0.10)');
+        grad.addColorStop(1, 'rgba(255,180,100,0.20)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(fx, 250, front.w, H - 250);
+        ctx.fillStyle = 'rgba(255,190,110,0.13)';
+        ctx.fillRect(fx + front.w * 0.32, 300, front.w * 0.36, H - 300);
+        ctx.fillStyle = '#ffd9a0';
+        for (let i = 0; i < 11; i += 1) {
+          const rise = (state.time * 95 + i * 113 + front.seed * 61) % 370;
+          const sx = fx + front.w * (0.16 + 0.68 * ((i * 37 + front.seed * 13) % 10) / 10) + Math.sin(state.time * 1.8 + i * 2.4) * 7;
+          ctx.globalAlpha = Math.max(0, 0.75 - rise / 520);
+          ctx.fillRect(sx, 660 - rise, 3.2, 3.2);
+        }
+        ctx.globalAlpha = 1;
+        continue;
+      }
       if (front.kind === 'fog') {
         const blobs = 7;
         for (let i = 0; i < blobs; i += 1) {
@@ -314,6 +341,113 @@ export function createRenderer(canvas) {
           }
         }
       }
+    }
+  }
+
+  /**
+   * One lighthouse of the Coast: a striped tower standing in its stretch of shore,
+   * and its beam — two wedges of light, opposite each other, turning on the clock
+   * weather.js keeps. The wedge is drawn from beamInfo, the very numbers the world
+   * uses to press on a caught plane, so the light the player sees is the light
+   * that pushes.
+   */
+  function drawLighthouse(state, front) {
+    const weather = state.weather;
+    const { lx, oy, angle } = weather.beamInfo(front, state.time);
+    const x = lx - state.cameraX;
+    if (x < -1600 || x > W + 1600) return;
+    // The wedges first, under everything the light passes over.
+    for (const dirAngle of [angle, angle + Math.PI]) {
+      const grad = ctx.createLinearGradient(x, oy, x + Math.cos(dirAngle) * 460, oy + Math.sin(dirAngle) * 460);
+      grad.addColorStop(0, 'rgba(255,242,190,0.20)');
+      grad.addColorStop(1, 'rgba(255,242,190,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(x, oy);
+      ctx.lineTo(x + Math.cos(dirAngle - 0.3) * 1500, oy + Math.sin(dirAngle - 0.3) * 1500);
+      ctx.lineTo(x + Math.cos(dirAngle + 0.3) * 1500, oy + Math.sin(dirAngle + 0.3) * 1500);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (x < -90 || x > W + 90) return;
+    // The tower: a tapered stack of lit and dark bands, the lamp room on top.
+    const baseY = 596;
+    ctx.fillStyle = '#1a2148';
+    ctx.beginPath();
+    ctx.moveTo(x - 21, baseY);
+    ctx.lineTo(x - 12, oy + 16);
+    ctx.lineTo(x + 12, oy + 16);
+    ctx.lineTo(x + 21, baseY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(232,168,62,0.75)';
+    for (let i = 0; i < 3; i += 1) {
+      const yTop = oy + 52 + i * 74;
+      ctx.beginPath();
+      ctx.moveTo(x - 19 + i * 2.4, yTop + 34);
+      ctx.lineTo(x - 17 + i * 2.4, yTop);
+      ctx.lineTo(x + 17 - i * 2.4, yTop);
+      ctx.lineTo(x + 19 - i * 2.4, yTop + 34);
+      ctx.closePath();
+      ctx.fill();
+    }
+    const glow = ctx.createRadialGradient(x, oy, 4, x, oy, 74);
+    glow.addColorStop(0, 'rgba(255,240,190,0.55)');
+    glow.addColorStop(1, 'rgba(255,240,190,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - 78, oy - 78, 156, 156);
+    ctx.fillStyle = '#fff3cf';
+    ctx.fillRect(x - 8, oy - 11, 16, 22);
+    ctx.fillStyle = '#232c5e';
+    ctx.fillRect(x - 11, oy - 17, 22, 6);
+  }
+
+  /**
+   * The Rooftop Gardens' doves, drawn where the world flies them: each bird a small
+   * gull-curve whose wings beat on the same clock world.js collides with, so the
+   * bird that is seen is the bird that scatters.
+   */
+  function drawDoves(state) {
+    if (!state.doves || state.doves.length === 0) return;
+    ctx.strokeStyle = '#dfe6ff';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    for (const flock of state.doves) {
+      for (const bird of flock.birds) {
+        const bx = flock.x + bird.dx - state.cameraX;
+        const by = flock.y + bird.dy + Math.sin(state.time * 9 + flock.seed + bird.dx) * 3;
+        if (bx < -30 || bx > W + 30) continue;
+        const flap = Math.sin(state.time * 13 + flock.seed + bird.dx * 0.7) * 4.5;
+        ctx.beginPath();
+        ctx.moveTo(bx - 8, by + flap);
+        ctx.quadraticCurveTo(bx - 2.5, by - 4.5 - flap * 0.4, bx, by);
+        ctx.quadraticCurveTo(bx + 2.5, by - 4.5 - flap * 0.4, bx + 8, by + flap);
+        ctx.stroke();
+        ctx.fillStyle = '#eef1ff';
+        ctx.fillRect(bx - 1.6, by - 1.6, 3.2, 3.2);
+      }
+    }
+  }
+
+  /**
+   * The Narrows' cloud deck: a low ceiling of cloud the plane rides beneath, drawn
+   * as a soft band with a scalloped underside at exactly the height world.js clamps
+   * the plane to — the lid the player sees is the lid that holds.
+   */
+  function drawCeiling(state) {
+    const ceiling = ROUTES[state.route].ceiling;
+    if (!ceiling || (state.phase !== 'playing' && state.phase !== 'draft')) return;
+    const grad = ctx.createLinearGradient(0, 0, 0, ceiling);
+    grad.addColorStop(0, 'rgba(168,182,228,0.42)');
+    grad.addColorStop(1, 'rgba(168,182,228,0.13)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, ceiling);
+    ctx.fillStyle = 'rgba(196,206,240,0.30)';
+    const drift = (state.cameraX * 0.85) % 190;
+    for (let x = -drift - 95; x < W + 95; x += 95) {
+      ctx.beginPath();
+      ctx.arc(x + 47, ceiling - 4 + Math.sin(state.time * 0.5 + x * 0.05) * 3, 47, 0, Math.PI);
+      ctx.fill();
     }
   }
 
@@ -386,10 +520,52 @@ export function createRenderer(canvas) {
     beam.addColorStop(1, `rgba(255,207,107,${(0.2 * dim).toFixed(3)})`);
     ctx.fillStyle = beam;
     ctx.fillRect(x - 15, y - 190, 30, 190);
-    ctx.globalAlpha = dim;
-    ctx.fillStyle = COLORS.goldBright;
-    ctx.fillRect(x - 8, y - 10, 16, 20);
-    ctx.globalAlpha = 1;
+    if (ROUTES[state.route].boss && state.boss) {
+      // The Warden's lantern: a great crowned lamp swinging on its chain, drawn at
+      // the moving point the world delivers to — bigger than any window, named, and
+      // ringed twice, so the boss's target reads as a boss's target at a glance.
+      const sway = Math.sin(state.time * 1.3) * 3;
+      ctx.strokeStyle = 'rgba(200,205,230,0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + sway * 2, y - 190);
+      ctx.lineTo(x, y - 26);
+      ctx.stroke();
+      const lampGlow = ctx.createRadialGradient(x, y, 6, x, y, 92);
+      lampGlow.addColorStop(0, `rgba(255,214,130,${(0.5 * dim).toFixed(3)})`);
+      lampGlow.addColorStop(1, 'rgba(255,214,130,0)');
+      ctx.fillStyle = lampGlow;
+      ctx.fillRect(x - 96, y - 96, 192, 192);
+      ctx.fillStyle = '#2a2140';
+      ctx.fillRect(x - 15, y - 21, 30, 42);
+      ctx.fillStyle = COLORS.goldBright;
+      ctx.fillRect(x - 10, y - 15, 20, 30);
+      ctx.fillStyle = '#ffb59d';
+      for (let s = -1; s <= 1; s += 1) {
+        ctx.beginPath();
+        ctx.moveTo(x + s * 11 - 4, y - 21);
+        ctx.lineTo(x + s * 11, y - 31 - (s === 0 ? 4 : 0));
+        ctx.lineTo(x + s * 11 + 4, y - 21);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.strokeStyle = '#ff9d5c';
+      ctx.globalAlpha = (0.5 + 0.5 * pulse) * dim;
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.arc(x, y, 36 + pulse * 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffb59d';
+      ctx.font = '700 13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('THE WARDEN', x, y + 58);
+    } else {
+      ctx.globalAlpha = dim;
+      ctx.fillStyle = COLORS.goldBright;
+      ctx.fillRect(x - 8, y - 10, 16, 20);
+      ctx.globalAlpha = 1;
+    }
     if (special && special.kind === 'express') {
       // The express ring is a clock: a hot orange arc that burns down with the timer,
       // over a thin full circle, so the dash left is readable at a glance.
@@ -594,11 +770,18 @@ export function createRenderer(canvas) {
     ctx.textAlign = 'center';
     ctx.fillStyle = route.finale ? '#ffb59d' : COLORS.gold;
     ctx.font = '700 21px Georgia, serif';
-    ctx.fillText(route.finale ? 'The Dawn Run' : `Night ${state.night} · ${route.name}`, W / 2, 44);
+    ctx.fillText(route.boss ? `Night ${state.night} · The Storm Warden` : `Night ${state.night} · ${route.name}`, W / 2, 44);
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = '600 13px system-ui, sans-serif';
     const clock = route.finale ? ` — sunrise in ${Math.max(0, Math.ceil(state.nightTime))}s` : '';
-    const weatherTag = route.weather === 'fog' ? ' · fog banks' : route.weather === 'rain' ? ' · rain bands' : route.festival ? ' · fireworks' : '';
+    const weatherTag = route.boss ? ' · his gusts rise with every letter'
+      : route.weather === 'fog' ? ' · fog banks'
+      : route.weather === 'rain' ? ' · rain bands'
+      : route.weather === 'beam' ? ' · the beam sweeps'
+      : route.weather === 'thermal' ? ' · thermals rising'
+      : route.mechanic === 'doves' ? ' · doves in the lane'
+      : route.ceiling ? ' · low cloud deck'
+      : route.festival ? ' · fireworks' : '';
     ctx.fillText(`${state.nightDelivered} of ${state.quota} letters delivered${clock}${weatherTag}`, W / 2, 66);
     drawRoutePips(state);
 
@@ -1023,6 +1206,8 @@ export function createRenderer(canvas) {
     drawFireworks(state);
     drawBuildings(state, city);
     drawWeatherFronts(state);
+    drawCeiling(state);
+    drawDoves(state);
     drawTarget(state);
     drawWindStreaks(state);
     drawStorm(state);

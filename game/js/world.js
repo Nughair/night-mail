@@ -1,9 +1,11 @@
 // Night Mail's world: the whole simulation — the paper plane's flight, the scrolling city,
 // delivery targets, combos, wind gusts, weather fronts, special deliveries, the moon clock,
-// collisions and particles — flown as a campaign: eight routes from campaign.js in order,
-// an upgrade draft between routes, a medal scored on every route, and a win when the Dawn
-// Run's quota lands before its sunrise timer. Winning unlocks the Night Owl, the same
-// districts cycled endlessly. It knows nothing about drawing or sound; each step returns
+// collisions and particles — flown as a campaign: twelve routes from campaign.js in order,
+// an upgrade draft between routes, a medal scored on every route, and a win when the Storm
+// Warden's quota lands before his sunrise timer. The Warden is the boss the campaign ends
+// on: his delivery window glides up and down its tower, and every letter delivered makes
+// his gusts come faster and harder. Winning unlocks the Night Owl, the same districts
+// cycled endlessly. It knows nothing about drawing or sound; each step returns
 // event flags so the shell can react.
 
 import {
@@ -19,6 +21,23 @@ import { medalForRoute } from './medals.js';
 
 /** Collisions use a slightly smaller circle than the drawing: skimming a roof should feel fair. */
 const HIT_RADIUS = 11;
+
+/**
+ * The Storm Warden's escalation, per letter delivered on his route: his window swings
+ * wider and faster, his gusts arrive sooner and shove harder, and each delivery wakes
+ * a squall on the spot. The caps keep the last letter hard, not impossible.
+ */
+const BOSS_AMP_BASE = 40;
+const BOSS_AMP_PER_LETTER = 5;
+const BOSS_AMP_MAX = 70;
+const BOSS_SWING_BASE = 1.35;
+const BOSS_SWING_PER_LETTER = 0.09;
+const BOSS_SWING_MAX = 2.05;
+const BOSS_GUST_RATE_PER_LETTER = 0.1;
+const BOSS_GUST_PUSH_PER_LETTER = 0.06;
+
+/** The doves of the Rooftop Gardens: how close a bird must come to scatter the plane. */
+const DOVE_HIT = 17;
 
 /** What the upgrades change, in one place: the numbers the flight below is computed from. */
 const TAILWIND_LIFT = 1.2;
@@ -37,6 +56,7 @@ export const EV_DRAFT = 64;
 export const EV_CLIP = 128;
 export const EV_LATE = 256;
 export const EV_FRAGILE = 512;
+export const EV_DOVE = 1024;
 
 export function createWorld(rng) {
   const city = createCity(rng);
@@ -77,6 +97,9 @@ export function createWorld(rng) {
     routeResults: [], // campaign only: { route, score, medal } per finished route
     special: null, // the current target's special delivery (deliveries.js), or null
     pendingSpecial: null, // a special kind forced for the next target (screenshot staging)
+    doves: [], // the Rooftop Gardens' flocks: { x, y, vx, seed, birds: [{dx, dy}] }
+    doveTimer: 0, // seconds until the gardens loose the next flock
+    boss: null, // on the Warden's route: { baseY, t } — his window's home and swing clock
     weather, // the fronts system (weather.js), stepped and read through the state
   };
 
@@ -85,6 +108,18 @@ export function createWorld(rng) {
   const comboWindow = () => (has('longcombo') ? LONGCOMBO_WINDOW : COMBO_WINDOW);
   const deliveryReach = () => (has('widebag') ? WIDEBAG_REACH : DELIVERY_REACH);
   const routeSeconds = (index) => ROUTES[index].seconds + (has('lampoil') ? LAMPOIL_SECONDS : 0);
+
+  /**
+   * How long until the next gust, on this route, right now. Gust strength stops
+   * growing at the Storm Quarter (see stepPlaying's gustPush): the late districts'
+   * challenge is their own weather and hazards. On the Warden's route the interval
+   * itself shrinks with every letter he has lost.
+   */
+  function gustInterval() {
+    let interval = rng.range(GUST_EVERY_MIN, GUST_EVERY_MAX) / route().wind;
+    if (route().boss) interval /= 1 + BOSS_GUST_RATE_PER_LETTER * state.nightDelivered;
+    return interval;
+  }
 
   function planeWorldX() {
     return state.cameraX + PLANE_X;
@@ -130,9 +165,12 @@ export function createWorld(rng) {
     state.invulnT = 0;
     state.routeScore = 0;
     state.special = null;
+    state.doves = [];
+    state.doveTimer = rng.range(1.2, 2.4);
+    state.boss = null;
     city.setDensity(route().density);
     weather.beginRoute(route(), state.cameraX);
-    state.gust.nextIn = rng.range(GUST_EVERY_MIN, GUST_EVERY_MAX) / route().wind;
+    state.gust.nextIn = gustInterval();
   }
 
   function reset() {
@@ -161,6 +199,8 @@ export function createWorld(rng) {
     state.routeResults = [];
     state.special = null;
     state.pendingSpecial = null;
+    state.doves = [];
+    state.boss = null;
     city.reset();
     startRoute(0);
   }
@@ -187,6 +227,53 @@ export function createWorld(rng) {
     state.mode = 'owl';
     state.phase = 'playing';
     showBanner('The Night Owl', `${NIGHT_OWL.blurb} — deliver ${state.quota} letters`);
+  }
+
+  /**
+   * Begin a campaign run partway in, from the campaign map: a fresh score and an
+   * empty postbag, but the first route flown is the one the player picked. The
+   * routes before it are simply not this run's to medal; the ones from here to
+   * the Warden are, and finishing him still wins the campaign.
+   */
+  function startRunAt(index) {
+    reset();
+    startRoute(Math.max(0, Math.min(index, FINAL_ROUTE)));
+    state.phase = 'playing';
+    routeBanner();
+  }
+
+  /**
+   * The checkpoint a saved campaign resumes from: the route the run stands at the
+   * START of, with the score, letters, upgrades and route results as they were when
+   * that route began — so a visit that ends mid-route loses only that route's flying,
+   * never the campaign. Read at the draft, the snapshot already names the next route
+   * (the draft's pick is not yet made, and is not the checkpoint's to keep).
+   */
+  function snapshot() {
+    if (state.mode !== 'campaign' || state.phase === 'over' || state.phase === 'title') return null;
+    const atDraft = state.phase === 'draft';
+    return {
+      route: atDraft ? state.route + 1 : state.route,
+      score: atDraft ? state.score : state.score - state.routeScore,
+      letters: atDraft ? state.letters : state.letters - state.nightDelivered,
+      upgrades: [...state.upgrades],
+      routeResults: state.routeResults.map((r) => ({ ...r })),
+    };
+  }
+
+  /** Resume a campaign from a snapshot(): the run stands again at that route's start. */
+  function resumeRun(saved) {
+    reset();
+    state.score = saved.score;
+    state.letters = saved.letters;
+    state.upgrades = [...saved.upgrades];
+    state.routeResults = saved.routeResults.map((r) => ({ ...r }));
+    startRoute(Math.max(0, Math.min(saved.route, FINAL_ROUTE)));
+    state.phase = 'playing';
+    showBanner(
+      `Night ${state.night} · ${route().name}`,
+      `Welcome back — the campaign resumes here: deliver ${state.quota} letters`,
+    );
   }
 
   /** Fly on to the next route: the next district, or, in the Owl, the cycle's next turn. */
@@ -274,7 +361,21 @@ export function createWorld(rng) {
     city.clearTarget(target);
     state.target = null;
     state.special = null;
+    state.boss = null;
     if (state.nightDelivered >= state.quota) return routeCleared();
+    if (route().boss) {
+      // The Warden answers every letter with a squall: his roar blasts the plane
+      // skyward off the window it just used, throwing off the next approach — and
+      // a breath of grace covers the blast, so the roar disrupts but never kills
+      // on the spot. (A downward squall here ended runs at the window itself:
+      // the porch floor is only a wingspan below it.)
+      state.gust.active = true;
+      state.gust.t = 1.0;
+      state.gust.dir = -1;
+      state.invulnT = Math.max(state.invulnT, 0.6);
+      floatText(planeWorldX(), state.plane.y - 74, 'The Warden roars — his gusts rise!', '#ffb59d', 18);
+      return EV_GUST;
+    }
     return 0;
   }
 
@@ -311,6 +412,57 @@ export function createWorld(rng) {
     return 0;
   }
 
+  /**
+   * The Rooftop Gardens' doves: a terrace ahead looses its flock, which drifts back
+   * across the lane on its own heading, bobbing as one body. The birds are not a
+   * wall — one touch is enough: the flock bursts, the plane is knocked upward with
+   * its combo gone, and the grace that follows a rooftop clip covers the escape.
+   */
+  function spawnFlock() {
+    let home = null;
+    for (const building of city.buildings) {
+      if (building.x > state.cameraX + VIEW.width * 0.85) {
+        home = building;
+        break;
+      }
+    }
+    const birds = [];
+    const count = rng.int(5, 7);
+    for (let i = 0; i < count; i += 1) {
+      birds.push({ dx: rng.range(-48, 48), dy: rng.range(-22, 22) });
+    }
+    state.doves.push({
+      x: home ? home.x + home.w / 2 : state.cameraX + VIEW.width + 220,
+      y: home ? home.topY - rng.range(46, 110) : rng.range(190, 330),
+      vx: -rng.range(36, 64),
+      seed: rng.range(0, Math.PI * 2),
+      birds,
+    });
+  }
+
+  /** One bird's live position: the flock's drift plus its own flap-bob. */
+  function birdPos(flock, bird) {
+    return {
+      x: flock.x + bird.dx,
+      y: flock.y + bird.dy + Math.sin(state.time * 9 + flock.seed + bird.dx) * 3,
+    };
+  }
+
+  /** A touch: the flock scatters, the combo goes with it, the plane bounces clear. */
+  function scatterFlock(flock) {
+    state.doves = state.doves.filter((f) => f !== flock);
+    state.combo = 0;
+    state.comboTimer = 0;
+    state.plane.vy = -215;
+    state.invulnT = Math.max(state.invulnT, 1.1);
+    for (const bird of flock.birds) {
+      const pos = birdPos(flock, bird);
+      burst(pos.x, pos.y, 2, '#e8ecf7', 130, 120);
+    }
+    floatText(planeWorldX(), state.plane.y - 44, 'Doves! The flock scatters the plane', '#dfe6ff', 18);
+    return EV_DOVE;
+  }
+
   function circleHitsRect(cx, cy, r, rect) {
     const nx = Math.max(rect.x, Math.min(cx, rect.x + rect.w));
     const ny = Math.max(rect.y, Math.min(cy, rect.y + rect.h));
@@ -345,7 +497,7 @@ export function createWorld(rng) {
       gust.t -= dt;
       if (gust.t <= 0) {
         gust.active = false;
-        gust.nextIn = rng.range(GUST_EVERY_MIN, GUST_EVERY_MAX) / route().wind;
+        gust.nextIn = gustInterval();
       }
     } else {
       gust.nextIn -= dt;
@@ -356,19 +508,30 @@ export function createWorld(rng) {
         events |= EV_GUST;
       }
     }
-    const gustPush = (240 + 60 * state.route) * route().wind * (has('tailwind') ? TAILWIND_GUST_KEEP : 1);
+    // Gust strength grows down the campaign only as far as the Storm Quarter; past
+    // it the districts challenge with their own weather instead. The Warden alone
+    // keeps escalating — his push grows with every letter delivered to his window.
+    let gustPush = (240 + 60 * Math.min(state.route, 6)) * route().wind * (has('tailwind') ? TAILWIND_GUST_KEEP : 1);
+    if (route().boss) gustPush *= 1 + BOSS_GUST_PUSH_PER_LETTER * state.nightDelivered;
 
     // Flight: gravity always pulls, holding climb fights it, dive adds to it, gusts
-    // shove — and a rain band shoves for exactly as long as the plane is inside it.
+    // shove — and the weather shoves for exactly as long as the plane is inside it:
+    // a rain band's push, a thermal's lift, the beam's press on a caught plane.
     plane.vy += GRAVITY * dt;
     if (control.climb) plane.vy -= LIFT * (has('tailwind') ? TAILWIND_LIFT : 1) * dt;
     if (control.dive) plane.vy += DIVE * dt;
     if (gust.active) plane.vy += gust.dir * gustPush * dt;
-    plane.vy += weather.pushAt(planeWorldX()) * dt;
+    plane.vy += weather.pushAt(planeWorldX(), plane.y, state.time) * dt;
     plane.vy = Math.max(MAX_RISE, Math.min(MAX_FALL, plane.vy));
     plane.y += plane.vy * dt;
     if (plane.y < 30) {
       plane.y = 30;
+      plane.vy = Math.max(plane.vy, 0);
+    }
+    // The Narrows' cloud deck: there is no climbing out of the street. The plane
+    // rides the deck's underside until the street lets it down again.
+    if (route().ceiling && plane.y < route().ceiling) {
+      plane.y = route().ceiling;
       plane.vy = Math.max(plane.vy, 0);
     }
     plane.angle = (plane.vy / MAX_FALL) * 0.55;
@@ -387,6 +550,10 @@ export function createWorld(rng) {
           ? { kind: state.pendingSpecial, t: EXPRESS_SECONDS }
           : assignSpecial(rng, state.route, state.letters);
         state.pendingSpecial = null;
+        // The Warden's window is not a window: it hangs in his tower's lantern and
+        // swings from the moment it is chosen. Its home is remembered here; the
+        // swing itself is applied below, before the delivery check reads it.
+        if (route().boss) state.boss = { baseY: state.target.y, t: 0 };
       }
     }
     if (state.target && state.special && state.special.kind === 'express') {
@@ -395,11 +562,20 @@ export function createWorld(rng) {
         city.clearTarget(state.target);
         state.target = null;
         state.special = null;
+        state.boss = null;
         state.combo = 0;
         state.comboTimer = 0;
         floatText(planeWorldX(), plane.y - 40, 'Too late — the express letter is withdrawn', '#ffb59d', 17);
         events |= EV_LATE;
       }
+    }
+    if (state.target && state.boss) {
+      // The swing widens and quickens with every letter the Warden has lost: the
+      // last window of the campaign will not sit still to be delivered to.
+      state.boss.t += dt;
+      const amp = Math.min(BOSS_AMP_MAX, BOSS_AMP_BASE + BOSS_AMP_PER_LETTER * state.nightDelivered);
+      const swing = Math.min(BOSS_SWING_MAX, BOSS_SWING_BASE + BOSS_SWING_PER_LETTER * state.nightDelivered);
+      state.target.y = state.boss.baseY + Math.sin(state.boss.t * swing) * amp;
     }
     if (state.target) {
       const dx = state.target.x - planeWorldX();
@@ -412,10 +588,43 @@ export function createWorld(rng) {
         city.clearTarget(state.target);
         state.target = null;
         state.special = null;
+        state.boss = null;
         if (state.combo > 0) {
           state.combo = 0;
           state.comboTimer = 0;
           floatText(planeWorldX(), plane.y - 40, 'missed — combo lost', '#9aa3d6', 17);
+        }
+      }
+    }
+
+    // The gardens' doves: flocks rise on their own schedule and drift across the
+    // lane. They are stepped here, after the flight, so a scatter's bounce lands
+    // before the rooftops are asked about — and the grace it grants covers them.
+    if (route().mechanic === 'doves') {
+      state.doveTimer -= dt;
+      if (state.doveTimer <= 0) {
+        spawnFlock();
+        state.doveTimer = rng.range(2.6, 4.4);
+      }
+    }
+    for (const flock of state.doves) {
+      flock.x += flock.vx * dt;
+      flock.y += Math.sin(state.time * 1.7 + flock.seed) * 11 * dt;
+    }
+    state.doves = state.doves.filter((flock) => flock.x > state.cameraX - 220);
+    if (state.invulnT <= 0) {
+      let scattered = false;
+      for (const flock of state.doves) {
+        if (scattered) break;
+        for (const bird of flock.birds) {
+          const pos = birdPos(flock, bird);
+          const dx = pos.x - planeWorldX();
+          const dy = pos.y - plane.y;
+          if (dx * dx + dy * dy < DOVE_HIT * DOVE_HIT) {
+            events |= scatterFlock(flock);
+            scattered = true;
+            break;
+          }
         }
       }
     }
@@ -514,5 +723,8 @@ export function createWorld(rng) {
 
   reset();
 
-  return { state, city, weather, reset, startRun, startOwlRun, step, pickUpgrade, jumpToRoute, forceNextSpecial };
+  return {
+    state, city, weather, reset, startRun, startOwlRun, startRunAt, resumeRun, snapshot,
+    step, pickUpgrade, jumpToRoute, forceNextSpecial,
+  };
 }
