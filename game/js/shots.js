@@ -1,9 +1,11 @@
-// The screenshot scenes behind ?shot=title|draft|play|over (with &seed=N). Each scene builds
-// a real world from the seed and plays it forward with the autopilot below — steer at the
-// target window, stay clear of the rooftops — so the frame is what an actual game looks
-// like, and the same seed always produces the same frame. Nothing here draws anything
-// itself. The scenes stage the campaign arc: the title, the upgrade draft after the first
-// route, a mid-combo delivery deep in the Mill District, and the results of a won campaign.
+// The screenshot scenes behind ?shot=title|campaign|storm|over (with &seed=N; draft and
+// play remain as alternates). Each scene builds a real world from the seed and plays it
+// forward with the autopilot below — steer at the target window, stay clear of the
+// rooftops — so the frame is what an actual game looks like, and the same seed always
+// produces the same frame. Nothing here draws anything itself. The scenes stage the
+// campaign arc: the title of a returning pilot (medals held, the Owl unlocked), the
+// campaign map with its medals, an express dash inside a Storm Quarter rain band, and
+// the results of a won campaign with its medal strip.
 
 import {
   BASE_SPEED, DELIVERY_REACH, DIVE, GRAVITY, LIFT, MAX_FALL, MAX_RISE, PLANE_X, STEP,
@@ -11,6 +13,7 @@ import {
 import { ROUTES } from './campaign.js';
 import { createRandom } from './random.js';
 import { createWorld, EV_DELIVER, EV_OVER } from './world.js';
+import { createCampaignRecord, medalForRoute, recordRouteResult } from './medals.js';
 
 /** The flight forces of one step, mirroring world.js exactly (upgrades included), so the
  *  autopilot's replay below predicts the real flight and not last version's. */
@@ -165,10 +168,36 @@ function playForward(world, controlFor, stopWhen, maxSeconds) {
   return false;
 }
 
+/**
+ * A returning pilot's record, built through medals.js's own folding so every medal on
+ * it is one its score truly earns: seven routes held, one campaign won, the Owl open.
+ */
+function stagedRecord() {
+  const record = createCampaignRecord(ROUTES.length);
+  const scores = [1250, 2150, 1900, 2900, 3100, 2400, 2900, 0];
+  scores.forEach((score, i) => {
+    if (score > 0) recordRouteResult(record, i, score, ROUTES[i]);
+  });
+  record.wins = 1;
+  record.owlUnlocked = true;
+  return record;
+}
+
 function stageTitle(seed) {
   const world = createWorld(createRandom(seed));
   playForward(world, () => ({ climb: false, dive: false }), null, 4.5);
-  return { world, screen: 'title', best: 0, isNewBest: false };
+  return { world, screen: 'title', best: 12480, isNewBest: false, record: stagedRecord() };
+}
+
+/**
+ * The campaign map: the same returning pilot's standing — medals across the first
+ * five districts, bronzes on the Heights and the Storm Quarter, the Dawn Run still
+ * waiting. The world behind it is the title's ambient drift.
+ */
+function stageCampaign(seed) {
+  const world = createWorld(createRandom(seed));
+  playForward(world, () => ({ climb: false, dive: false }), null, 3.2);
+  return { world, screen: 'campaign', best: 12480, isNewBest: false, record: stagedRecord() };
 }
 
 /**
@@ -190,75 +219,108 @@ function stageDraft(seed) {
 }
 
 /**
- * A mid-combo delivery in the Mill District: the campaign is staged onto the third route
- * with the Tailwind Charm already drafted, then flown until just after a combo delivery.
+ * An express dash in the Storm Quarter: the campaign is staged onto the seventh route
+ * with two upgrades aboard and three letters already down, the first target forced to
+ * an express, then flown until an express letter is on the clock with a rain band in
+ * view and the combo warm — the frame the weather and the specials share.
  */
-function stagePlay(seed) {
+function stageStorm(seed) {
   const world = createWorld(createRandom(seed));
   world.startRun();
   const state = world.state;
-  state.upgrades.push('tailwind');
-  world.jumpToRoute(2);
-  state.nightDelivered = 2;
-  state.letters = 13;
-  state.score = 2410;
-  state.bestCombo = 3;
-  let sinceDelivery = Infinity;
-  playForward(
+  state.upgrades.push('tailwind', 'sturdy');
+  world.jumpToRoute(6);
+  state.nightDelivered = 3;
+  state.letters = 37;
+  state.score = 9100;
+  state.bestCombo = 5;
+  world.forceNextSpecial('express');
+  const rainInView = (w) => w.weather.fronts.some(
+    (front) => front.kind === 'rain' && front.x - w.state.cameraX < 980 && front.x + front.w - w.state.cameraX > 240,
+  );
+  // The scene must not end: hold the route's count below its quota, so the campaign
+  // never advances out of the Storm Quarter while the frame is being found.
+  const holdRoute = (w) => {
+    if (w.state.nightDelivered >= 6) w.state.nightDelivered = 2;
+  };
+  const found = playForward(
     world,
     autopilotControl,
-    (w, events) => {
-      if (events & EV_DELIVER) sinceDelivery = 0;
-      else sinceDelivery += STEP;
-      return w.state.combo >= 2 && sinceDelivery > 0.14 && sinceDelivery < 0.6;
+    (w) => {
+      holdRoute(w);
+      const special = w.state.special;
+      return Boolean(
+        special && special.kind === 'express' && special.t > 3.2 && special.t < 7.6
+        && w.state.combo >= 2 && rainInView(w),
+      );
     },
-    45,
+    70,
   );
+  if (!found) {
+    // Any express on the clock will do: the band is never far away in this district.
+    playForward(
+      world,
+      autopilotControl,
+      (w) => {
+        holdRoute(w);
+        return Boolean(w.state.special && w.state.special.kind === 'express' && w.state.special.t > 2.5);
+      },
+      30,
+    );
+  }
   return { world, screen: 'play', best: 0, isNewBest: false };
 }
 
 /**
  * The results of a won campaign: staged onto the Dawn Run one letter short, with three
- * upgrades aboard, and the last letter delivered by the autopilot for real — the win on
- * screen is the world's own. If a seed's storm refuses, fall back to the wreck of a late
- * route, which is also a true ending.
+ * upgrades aboard and the seven flown routes' results already in the book (their
+ * medals computed by medals.js from their scores), and the last letter delivered by
+ * the autopilot for real — the win on screen is the world's own. If a seed's storm
+ * refuses, fall back to the wreck of a late route, which is also a true ending.
  */
 function stageOver(seed) {
   const world = createWorld(createRandom(seed));
   world.startRun();
   const state = world.state;
   state.upgrades.push('tailwind', 'sturdy', 'longcombo');
-  world.jumpToRoute(5);
+  const flownScores = [1250, 2150, 1900, 2900, 3100, 3500, 4300];
+  flownScores.forEach((score, i) => {
+    state.routeResults.push({ route: i, score, medal: medalForRoute(score, ROUTES[i], i) });
+  });
+  world.jumpToRoute(7);
   state.nightDelivered = state.quota - 1;
-  state.letters = 35;
-  state.score = 8640;
-  state.bestCombo = 6;
+  state.letters = 47;
+  state.score = 19300;
+  // The five Dawn Run letters already down in this fiction scored as letters do.
+  state.routeScore = 2950;
+  state.bestCombo = 7;
   const won = playForward(world, autopilotControl, (w, events) => (events & EV_OVER) !== 0, 44);
   if (!won || !state.won) {
     // The storm took this seed: show the other true ending, a crash late in the campaign.
     const late = createWorld(createRandom(seed));
     late.startRun();
     late.state.upgrades.push('tailwind');
-    late.jumpToRoute(3);
-    late.state.letters = 24;
-    late.state.score = 5120;
+    late.jumpToRoute(5);
+    late.state.letters = 30;
+    late.state.score = 9800;
     late.state.bestCombo = 5;
-    playForward(late, autopilotControl, (w) => w.state.letters >= 27, 40);
+    playForward(late, autopilotControl, (w) => w.state.letters >= 33, 40);
     playForward(late, () => ({ climb: false, dive: true }), (w, events) => (events & EV_OVER) !== 0, 20);
     playForward(late, () => ({ climb: false, dive: false }), null, 1.6);
     const lateScore = late.state.score;
-    return { world: late, screen: 'over', best: lateScore, isNewBest: lateScore > 0 };
+    return { world: late, screen: 'over', best: lateScore, isNewBest: lateScore > 0, record: stagedRecord() };
   }
   // Let the moment settle, as it does for a player reading the results.
   playForward(world, () => ({ climb: false, dive: false }), null, 1.6);
   const score = state.score;
-  return { world, screen: 'over', best: score, isNewBest: score > 0 };
+  return { world, screen: 'over', best: score, isNewBest: score > 0, record: stagedRecord() };
 }
 
-/** Stage the named scene ('title' unless it is draft, play or over) and return what to draw. */
+/** Stage the named scene ('title' unless it is campaign, storm, draft or over). */
 export function stageShot(name, seed) {
+  if (name === 'campaign') return stageCampaign(seed);
   if (name === 'draft') return stageDraft(seed);
-  if (name === 'play') return stagePlay(seed);
+  if (name === 'storm' || name === 'play') return stageStorm(seed);
   if (name === 'over') return stageOver(seed);
   return stageTitle(seed);
 }
