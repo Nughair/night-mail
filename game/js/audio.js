@@ -97,6 +97,18 @@ export function createAudio() {
       tone(1318.5 + lift, { dur: 0.18, vol: 0.14 });
       tone(1760 + lift * 1.5, { at: 0.07, dur: 0.3, vol: 0.12 });
     },
+    /** An express letter withdrawn: two notes falling away, the dash wasted. */
+    late() {
+      if (!ensureContext()) return;
+      tone(987.77, { type: 'triangle', dur: 0.16, vol: 0.11 });
+      tone(659.25, { type: 'triangle', at: 0.11, dur: 0.26, vol: 0.1 });
+    },
+    /** A fragile letter breaking on a roof: a small dry crack of noise. */
+    crack() {
+      if (!ensureContext()) return;
+      noise({ dur: 0.09, vol: 0.16, from: 2600, to: 700 });
+      tone(220, { type: 'square', dur: 0.07, vol: 0.05 });
+    },
     /** A crash: a low thud and a crumple of paper noise. */
     thud() {
       if (!ensureContext()) return;

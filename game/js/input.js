@@ -4,6 +4,8 @@
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_MUTE = 4;
+export const ACTION_CAMPAIGN = 8;
+export const ACTION_OWL = 16;
 
 const CLIMB_CODES = new Set(['ArrowUp', 'KeyW', 'Space']);
 const DIVE_CODES = new Set(['ArrowDown', 'KeyS']);
@@ -26,6 +28,8 @@ export function createInput(canvas) {
     if (event.code === 'Enter' || event.code === 'Space') queued |= ACTION_CONFIRM;
     if (event.code === 'KeyP' || event.code === 'Escape') queued |= ACTION_PAUSE;
     if (event.code === 'KeyM') queued |= ACTION_MUTE;
+    if (event.code === 'KeyC') queued |= ACTION_CAMPAIGN;
+    if (event.code === 'KeyN') queued |= ACTION_OWL;
     if (PICK_CODES.has(event.code)) picks.push(PICK_CODES.get(event.code));
   }
 

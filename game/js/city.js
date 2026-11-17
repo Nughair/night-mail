@@ -1,14 +1,22 @@
 // The sleeping city: an endless procedurally generated skyline. Each building gets a seeded
-// grid of windows (about a third of them warm and lit), and some get a chimney or a water
-// tower on the roof. The city also chooses which lit window is the next delivery target.
+// grid of windows (about a third of them lit, in a small palette of lamp hues), and some
+// get a chimney or a water tower on the roof. The city also chooses which lit window is
+// the next delivery target.
 
 import { PORCH_DEPTH, VIEW } from './config.js';
 
 const BODY_COLORS = ['#131a3d', '#171f47', '#101636'];
+/** The lamp hues a lit window can burn, weighted: amber and gold common, the rest rare. */
+const WINDOW_HUES = ['warm', 'warm', 'gold', 'gold', 'rose', 'cool'];
 const WINDOW_STEP_X = 26;
 const WINDOW_STEP_Y = 34;
 const WINDOW_W = 13;
 const WINDOW_H = 17;
+
+/** One window's lamp hue, drawn from the weighted palette above. */
+function pickHue(rng) {
+  return WINDOW_HUES[rng.int(0, WINDOW_HUES.length - 1)];
+}
 
 export function createCity(rng) {
   const buildings = [];
@@ -30,7 +38,11 @@ export function createCity(rng) {
           row,
           // The top row is lit more often: those are the windows letters are delivered to.
           lit: rng.chance(row === 0 ? 0.55 : 0.32),
-          warm: rng.chance(0.78),
+          // The lamp behind the glass: most burn amber or gold, a few rose or cool
+          // blue, and a handful spill a halo onto the wall around them — the variety
+          // is what makes a street of windows read as homes, not a grid.
+          hue: pickHue(rng),
+          halo: rng.chance(0.16),
           flicker: rng.range(0, Math.PI * 2),
           target: false,
         });

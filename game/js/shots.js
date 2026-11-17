@@ -103,6 +103,9 @@ function policySurvival(world, wantBias, steps) {
     if (control.climb) sim.plane.vy -= forces.lift * STEP;
     if (control.dive) sim.plane.vy += DIVE * STEP;
     if (sim.gust.active) sim.plane.vy += sim.gust.dir * forces.gustPush * STEP;
+    // Rain bands push where they stand; the fronts barely drift over a replay's
+    // second, so the live system's answer at the replayed position is close enough.
+    sim.plane.vy += world.weather.pushAt(sim.cameraX + PLANE_X) * STEP;
     sim.plane.vy = Math.max(MAX_RISE, Math.min(MAX_FALL, sim.plane.vy));
     sim.plane.y += sim.plane.vy * STEP;
     if (sim.plane.y < 30) {

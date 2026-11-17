@@ -1,10 +1,14 @@
-// Everything Night Mail draws: the night sky and its moon, two skyline layers, the lit
-// windows, the paper plane and its trail, particles, the HUD with its campaign pips and
-// upgrade row, and the title, pause, upgrade-draft and results screens. It only reads the
-// world state; it never changes it.
+// Everything Night Mail draws: the night sky and its moon, three parallax skyline
+// layers, the lit windows in their lamp hues, weather fronts (fog banks, rain bands),
+// festival fireworks, the paper plane and its paper-trail ribbon, particles, the HUD
+// with its campaign pips, upgrade row and special-delivery chip, and the title,
+// campaign, pause, upgrade-draft and results screens. It only reads the world state;
+// it never changes it.
 
 import { COLORS, COMBO_WINDOW, PLANE_X, VIEW } from './config.js';
 import { DRAFT_CARDS, ROUTES, upgradeById } from './campaign.js';
+import { EXPRESS_SECONDS, SPECIAL_LABELS } from './deliveries.js';
+import { MEDAL_COLORS, medalCounts } from './medals.js';
 import { createRandom } from './random.js';
 
 export const SCREEN_TITLE = 'title';
@@ -12,6 +16,15 @@ export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
 export const SCREEN_DRAFT = 'draft';
 export const SCREEN_OVER = 'over';
+export const SCREEN_CAMPAIGN = 'campaign';
+
+/** The lamp hues of city.js, as draw colours: amber and gold warm, rose rare, cool rarer. */
+const HUE_COLORS = {
+  warm: COLORS.windowLit,
+  gold: COLORS.windowWarm,
+  rose: '#ffab91',
+  cool: '#bcd2ff',
+};
 
 const W = VIEW.width;
 const H = VIEW.height;
@@ -38,10 +51,37 @@ function makeFarSkyline() {
   return { blocks, span: x };
 }
 
+/**
+ * The middle skyline: nearer and taller than the far one, a touch lighter, with a few
+ * windows of its own still lit. It sits between the far blocks and the flown city, so
+ * the night has three depths and the plane's lane reads against all of them.
+ */
+function makeMidSkyline() {
+  const rng = createRandom(41517);
+  const blocks = [];
+  let x = 0;
+  while (x < 3000) {
+    const w = rng.range(90, 190);
+    const top = rng.range(360, 520);
+    const windows = [];
+    const cols = Math.floor(w / 34);
+    const rows = Math.floor((VIEW.height - top) / 52);
+    for (let i = 0; i < cols * rows; i += 1) {
+      if (rng.chance(0.16)) {
+        windows.push({ dx: 12 + (i % cols) * 34, dy: 18 + Math.floor(i / cols) * 52, hue: rng.pick(['warm', 'gold', 'cool']) });
+      }
+    }
+    blocks.push({ x, w, top, windows });
+    x += w + rng.range(10, 44);
+  }
+  return { blocks, span: x };
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   const stars = makeStars();
   const far = makeFarSkyline();
+  const mid = makeMidSkyline();
 
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
@@ -61,19 +101,33 @@ export function createRenderer(canvas) {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
     // The sunrise itself: it breaks the run at dawn, and on the Dawn Run it is the
-    // storm's backdrop, rising as the finale's timer runs down.
+    // storm's backdrop, rising as the finale's timer runs down — a warm wash over the
+    // rooftops and the sun's own disc climbing out of the streets behind them.
     let dawnStrength = 0;
-    if (state.phase === 'over' && state.overReason === 'dawn') dawnStrength = 0.28;
-    else if (state.phase === 'over' && state.overReason === 'win') dawnStrength = 0.34;
+    if (state.phase === 'over' && state.overReason === 'dawn') dawnStrength = 0.5;
+    else if (state.phase === 'over' && state.overReason === 'win') dawnStrength = 0.62;
     else if (state.phase === 'playing' && ROUTES[state.route].finale) {
-      dawnStrength = 0.3 * (1 - state.nightTime / state.nightDuration);
+      dawnStrength = 0.55 * (1 - state.nightTime / state.nightDuration);
     }
     if (dawnStrength > 0) {
-      const dawn = ctx.createLinearGradient(0, H * 0.45, 0, H);
-      dawn.addColorStop(0, 'rgba(255,150,80,0)');
-      dawn.addColorStop(1, `rgba(255,150,80,${dawnStrength.toFixed(3)})`);
+      const dawn = ctx.createLinearGradient(0, H * 0.38, 0, H);
+      dawn.addColorStop(0, 'rgba(255,120,70,0)');
+      dawn.addColorStop(0.62, `rgba(255,140,75,${(dawnStrength * 0.55).toFixed(3)})`);
+      dawn.addColorStop(1, `rgba(255,170,90,${dawnStrength.toFixed(3)})`);
       ctx.fillStyle = dawn;
-      ctx.fillRect(0, H * 0.45, W, H * 0.55);
+      ctx.fillRect(0, H * 0.38, W, H * 0.62);
+      // The disc: it breaks the horizon as the strength grows, low and wide and hot.
+      const sunY = H + 26 - dawnStrength * 120;
+      const sun = ctx.createRadialGradient(W * 0.68, sunY, 8, W * 0.68, sunY, 190);
+      sun.addColorStop(0, `rgba(255,214,150,${(0.75 * dawnStrength + 0.12).toFixed(3)})`);
+      sun.addColorStop(0.35, `rgba(255,160,90,${(0.5 * dawnStrength).toFixed(3)})`);
+      sun.addColorStop(1, 'rgba(255,140,80,0)');
+      ctx.fillStyle = sun;
+      ctx.fillRect(W * 0.68 - 200, sunY - 200, 400, 400);
+      ctx.fillStyle = `rgba(255,226,170,${(0.85 * dawnStrength).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(W * 0.68, sunY, 46, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
 
@@ -118,6 +172,22 @@ export function createRenderer(canvas) {
     for (let base = -offset; base < W; base += far.span) {
       for (const block of far.blocks) {
         ctx.fillRect(base + block.x, block.top, block.w, H - block.top);
+      }
+    }
+  }
+
+  function drawMidSkyline(state) {
+    const offset = (state.cameraX * 0.55) % mid.span;
+    for (let base = -offset; base < W; base += mid.span) {
+      for (const block of mid.blocks) {
+        ctx.fillStyle = '#0d1233';
+        ctx.fillRect(base + block.x, block.top, block.w, H - block.top);
+        for (const win of block.windows) {
+          ctx.globalAlpha = 0.5;
+          ctx.fillStyle = HUE_COLORS[win.hue];
+          ctx.fillRect(base + block.x + win.dx, block.top + win.dy, 7, 10);
+          ctx.globalAlpha = 1;
+        }
       }
     }
   }
@@ -179,9 +249,17 @@ export function createRenderer(canvas) {
         if (wx < -30 || wx > W + 30) continue;
         if (win.target) continue; // the target window is drawn with its glow, below
         if (win.lit) {
+          // Fog thins every lamp behind it: a window deep in a bank is a smudge.
+          const fog = state.weather ? state.weather.fogAt(rect.x + rect.w / 2) : 0;
           const flicker = 0.82 + 0.18 * Math.sin(state.time * 0.6 + win.flicker);
-          ctx.globalAlpha = flicker;
-          ctx.fillStyle = win.warm ? COLORS.windowLit : '#bcd2ff';
+          const color = HUE_COLORS[win.hue] ?? COLORS.windowLit;
+          if (win.halo) {
+            ctx.globalAlpha = 0.13 * flicker * (1 - fog * 0.7);
+            ctx.fillStyle = color;
+            ctx.fillRect(wx - 4, rect.y - 4, rect.w + 8, rect.h + 8);
+          }
+          ctx.globalAlpha = flicker * (1 - fog * 0.62);
+          ctx.fillStyle = color;
           ctx.fillRect(wx, rect.y, rect.w, rect.h);
           ctx.globalAlpha = 1;
         } else {
@@ -192,23 +270,174 @@ export function createRenderer(canvas) {
     }
   }
 
+  /**
+   * The weather fronts, drawn where the world keeps them: a fog bank is a low wall of
+   * soft, overlapping breaths that the rooftops poke out of; a rain band is a darker
+   * column of sky with its own dense slant of rain, visibly a place, not a mood.
+   */
+  function drawWeatherFronts(state) {
+    const weather = state.weather;
+    if (!weather) return;
+    for (const front of weather.fronts) {
+      const fx = front.x - state.cameraX;
+      if (fx + front.w < -80 || fx > W + 80) continue;
+      if (front.kind === 'fog') {
+        const blobs = 7;
+        for (let i = 0; i < blobs; i += 1) {
+          const bx = fx + (front.w * (i + 0.5)) / blobs + Math.sin(state.time * 0.22 + front.seed + i * 1.7) * 16;
+          const by = 468 + Math.sin(state.time * 0.16 + front.seed * 2 + i * 2.3) * 26;
+          const r = front.w / blobs + 90;
+          const fog = ctx.createRadialGradient(bx, by, 10, bx, by, r);
+          fog.addColorStop(0, 'rgba(196,208,238,0.34)');
+          fog.addColorStop(0.7, 'rgba(180,194,232,0.16)');
+          fog.addColorStop(1, 'rgba(180,194,232,0)');
+          ctx.fillStyle = fog;
+          ctx.fillRect(bx - r, by - r, r * 2, r * 2);
+        }
+        ctx.fillStyle = 'rgba(190,202,235,0.10)';
+        ctx.fillRect(fx, 300, front.w, H - 300);
+      } else {
+        ctx.fillStyle = 'rgba(16,22,54,0.30)';
+        ctx.fillRect(fx, 0, front.w, H);
+        ctx.strokeStyle = 'rgba(170,195,255,0.34)';
+        ctx.lineWidth = 1.5;
+        const drift = (state.time * 940) % 130;
+        const fall = (state.time * 1350) % 170;
+        for (let row = 0; row < 5; row += 1) {
+          for (let x = -60; x < front.w + 60; x += 130) {
+            const sx = fx + x + drift + row * 29;
+            const sy = -30 + row * 170 + fall;
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(sx - 11, sy + 38);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+  }
+
+  /** The Festival Quarter's fireworks: a fixed seeded show, a pure function of the clock. */
+  const FIREWORKS = (() => {
+    const rng = createRandom(90210);
+    const bursts = [];
+    for (let i = 0; i < 9; i += 1) {
+      bursts.push({
+        at: i * 6.4 + rng.range(0, 2.2),
+        x: rng.range(120, 1160),
+        y: rng.range(110, 300),
+        color: rng.pick(['#ffcf6b', '#ffab91', '#bcd2ff', '#ffd7f0', '#a8ffc9']),
+        seed: rng.range(0, 6.28),
+      });
+    }
+    return bursts;
+  })();
+
+  function drawFireworks(state) {
+    if (!ROUTES[state.route].festival || state.phase === 'over') return;
+    const cycle = 62;
+    const t = state.time % cycle;
+    for (const burst of FIREWORKS) {
+      const age = t - burst.at;
+      if (age < 0 || age > 2.6) continue;
+      if (age < 0.85) {
+        // The shell climbing: a small bright head with a short tail of sparks.
+        const frac = age / 0.85;
+        const y = 560 - (560 - burst.y) * frac;
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#ffe9a8';
+        ctx.fillRect(burst.x - 2, y - 2, 4, 4);
+        ctx.globalAlpha = 0.4;
+        ctx.fillRect(burst.x - 1.4, y + 7, 2.8, 9);
+        ctx.globalAlpha = 1;
+      } else {
+        const burstAge = age - 0.85;
+        const frac = burstAge / 1.75;
+        const radius = 12 + frac * 95;
+        const alpha = Math.max(0, 1 - frac) * 0.9;
+        ctx.fillStyle = burst.color;
+        for (let i = 0; i < 14; i += 1) {
+          const angle = burst.seed + (i / 14) * Math.PI * 2;
+          const sx = burst.x + Math.cos(angle) * radius;
+          const sy = burst.y + Math.sin(angle) * radius + frac * frac * 34;
+          ctx.globalAlpha = alpha;
+          ctx.fillRect(sx - 2, sy - 2, 4, 4);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
   function drawTarget(state) {
     const target = state.target;
     if (!target || state.phase !== 'playing') return;
     const x = target.x - state.cameraX;
     if (x < -60 || x > W + 60) return;
     const y = target.y;
+    const special = state.special;
     const pulse = 0.5 + 0.5 * Math.sin(state.time * 5.2);
+    // Fog is the special deliveries' quiet enemy: deep in a bank, even the target's
+    // beam and ring fade to a hint, and the window is found by flying closer.
+    const fog = state.weather ? state.weather.fogAt(target.x) : 0;
+    const dim = 1 - fog * 0.66;
     // A soft beam of lamplight rising from the window, so the eye finds it at speed.
     const beam = ctx.createLinearGradient(0, y - 190, 0, y);
     beam.addColorStop(0, 'rgba(255,207,107,0)');
-    beam.addColorStop(1, 'rgba(255,207,107,0.20)');
+    beam.addColorStop(1, `rgba(255,207,107,${(0.2 * dim).toFixed(3)})`);
     ctx.fillStyle = beam;
     ctx.fillRect(x - 15, y - 190, 30, 190);
+    ctx.globalAlpha = dim;
     ctx.fillStyle = COLORS.goldBright;
     ctx.fillRect(x - 8, y - 10, 16, 20);
+    ctx.globalAlpha = 1;
+    if (special && special.kind === 'express') {
+      // The express ring is a clock: a hot orange arc that burns down with the timer,
+      // over a thin full circle, so the dash left is readable at a glance.
+      const frac = Math.max(0, special.t / EXPRESS_SECONDS);
+      ctx.strokeStyle = 'rgba(255,157,92,0.4)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, 27, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = special.t < 3 && Math.sin(state.time * 10) > 0 ? '#ff7a6b' : '#ff9d5c';
+      ctx.lineWidth = 3.4;
+      ctx.beginPath();
+      ctx.arc(x, y, 27, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.stroke();
+      // A small lightning bolt above the window: express at icon size.
+      ctx.fillStyle = '#ffb59d';
+      ctx.beginPath();
+      ctx.moveTo(x + 3, y - 52);
+      ctx.lineTo(x - 6, y - 34);
+      ctx.lineTo(x - 0.5, y - 34);
+      ctx.lineTo(x - 3, y - 18);
+      ctx.lineTo(x + 7, y - 38);
+      ctx.lineTo(x + 1.5, y - 38);
+      ctx.closePath();
+      ctx.fill();
+    } else if (special && special.kind === 'fragile') {
+      // The fragile ring is pale and steady, and its envelope wears the crack it
+      // cannot survive: a thin zigzag across the paper.
+      ctx.strokeStyle = '#a8d8ff';
+      ctx.globalAlpha = 0.65 + 0.3 * pulse;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(x, y, 25 + pulse * 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      drawEnvelope(x, y - 46 - Math.sin(state.time * 2.6) * 5, 26, 18, '#dceaff');
+      ctx.strokeStyle = 'rgba(70,90,140,0.8)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(x - 6, y - 56 - Math.sin(state.time * 2.6) * 5);
+      ctx.lineTo(x - 1, y - 48 - Math.sin(state.time * 2.6) * 5);
+      ctx.lineTo(x - 4, y - 43 - Math.sin(state.time * 2.6) * 5);
+      ctx.lineTo(x + 3, y - 36 - Math.sin(state.time * 2.6) * 5);
+      ctx.stroke();
+      return;
+    }
     ctx.strokeStyle = COLORS.gold;
-    ctx.globalAlpha = 0.55 + 0.45 * pulse;
+    ctx.globalAlpha = (0.55 + 0.45 * pulse) * dim;
     ctx.lineWidth = 2.4;
     ctx.beginPath();
     ctx.arc(x, y, 21 + pulse * 6, 0, Math.PI * 2);
@@ -219,13 +448,23 @@ export function createRenderer(canvas) {
 
   function drawPlane(state) {
     const plane = state.plane;
-    // The paper trail: a fading dotted wake behind the plane.
-    for (const point of plane.trail) {
-      const x = point.x - state.cameraX;
-      if (x < -20 || x > W + 20) continue;
-      ctx.globalAlpha = Math.max(0, point.life) * 0.4;
-      ctx.fillStyle = '#cfd6f5';
-      ctx.fillRect(x - 1.6, point.y - 1.6, 3.2, 3.2);
+    // The paper trail: a ribbon of wake behind the plane, drawn as one tapering
+    // stroke per segment — thick and bright at the tail, hair-thin where it fades.
+    ctx.strokeStyle = '#cfd6f5';
+    ctx.lineCap = 'round';
+    for (let i = 1; i < plane.trail.length; i += 1) {
+      const a = plane.trail[i - 1];
+      const b = plane.trail[i];
+      const ax = a.x - state.cameraX;
+      const bx = b.x - state.cameraX;
+      if (bx < -20 || ax > W + 20) continue;
+      const life = Math.max(0, b.life);
+      ctx.globalAlpha = life * 0.42;
+      ctx.lineWidth = 0.8 + life * 3.4;
+      ctx.beginPath();
+      ctx.moveTo(ax, a.y);
+      ctx.lineTo(bx, b.y);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
     if (plane.dead) return;
@@ -359,7 +598,8 @@ export function createRenderer(canvas) {
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = '600 13px system-ui, sans-serif';
     const clock = route.finale ? ` — sunrise in ${Math.max(0, Math.ceil(state.nightTime))}s` : '';
-    ctx.fillText(`${state.nightDelivered} of ${state.quota} letters delivered${clock}`, W / 2, 66);
+    const weatherTag = route.weather === 'fog' ? ' · fog banks' : route.weather === 'rain' ? ' · rain bands' : route.festival ? ' · fireworks' : '';
+    ctx.fillText(`${state.nightDelivered} of ${state.quota} letters delivered${clock}${weatherTag}`, W / 2, 66);
     drawRoutePips(state);
 
     panel(W - 218, 16, 200, 64);
@@ -390,6 +630,23 @@ export function createRenderer(canvas) {
       ctx.font = '700 17px system-ui, sans-serif';
       const arrow = state.gust.dir > 0 ? 'pushing down' : 'lifting up';
       ctx.fillText(`~ wind gust, ${arrow} ~`, W / 2, 126);
+    }
+
+    // The special delivery aboard, named with its rule and — for an express — its
+    // clock, counting down in the open where the dash can be planned around it.
+    if (state.special) {
+      const special = state.special;
+      ctx.textAlign = 'center';
+      if (special.kind === 'express') {
+        const urgent = special.t < 3;
+        ctx.fillStyle = urgent && Math.sin(state.time * 10) > 0 ? '#ff7a6b' : '#ff9d5c';
+        ctx.font = '700 18px system-ui, sans-serif';
+        ctx.fillText(`⚡ ${SPECIAL_LABELS.express} — ${Math.max(0, special.t).toFixed(1)}s`, W / 2, 152);
+      } else {
+        ctx.fillStyle = '#a8d8ff';
+        ctx.font = '700 18px system-ui, sans-serif';
+        ctx.fillText(`✉ ${SPECIAL_LABELS.fragile}`, W / 2, 152);
+      }
     }
 
     drawUpgradeRow(state);
@@ -436,40 +693,145 @@ export function createRenderer(canvas) {
     ctx.globalAlpha = 1;
   }
 
-  function drawTitle(state, best) {
+  function drawTitle(state, best, record) {
     ctx.fillStyle = 'rgba(5,7,20,0.34)';
     ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
-    drawEnvelope(W / 2, 128, 54, 38, COLORS.gold);
+    drawEnvelope(W / 2, 118, 54, 38, COLORS.gold);
     ctx.fillStyle = COLORS.goldBright;
     ctx.font = '700 92px Georgia, "Times New Roman", serif';
-    ctx.fillText('NIGHT MAIL', W / 2, 248);
+    ctx.fillText('NIGHT MAIL', W / 2, 232);
     ctx.fillStyle = COLORS.ink;
     ctx.font = 'italic 23px Georgia, serif';
-    ctx.fillText('a paper plane over a sleeping city', W / 2, 288);
+    ctx.fillText('a paper plane over a sleeping city', W / 2, 270);
 
     ctx.font = '600 20px system-ui, sans-serif';
     ctx.fillStyle = COLORS.ink;
-    ctx.fillText('Hold  SPACE,  ↑  or the MOUSE  to climb — release to glide down', W / 2, 356);
-    ctx.fillText('Slip a letter through each window that glows gold. Chain deliveries for combos.', W / 2, 388);
-    ctx.fillText('Mind the rooftops, ride the gusts, and finish each route before the moon sets.', W / 2, 420);
+    ctx.fillText('Hold  SPACE,  ↑  or the MOUSE  to climb — release to glide down', W / 2, 330);
+    ctx.fillText('Slip a letter through each window that glows gold. Chain deliveries for combos.', W / 2, 362);
+    ctx.fillText('Mind the rooftops, the fog and the rain, and finish each route before the moon sets.', W / 2, 394);
     ctx.fillStyle = COLORS.gold;
-    ctx.fillText('Six routes before dawn — five districts, then the Dawn Run. Draft an upgrade after every route.', W / 2, 452);
+    ctx.fillText('Eight routes before dawn — seven districts, then the Dawn Run. Draft an upgrade after every route.', W / 2, 428);
+    ctx.fillStyle = COLORS.ink;
+    ctx.fillText('Express letters pay double against the clock; fragile ones break on a single clip.', W / 2, 458);
+    ctx.fillStyle = COLORS.inkDim;
+    ctx.fillText('Every route is scored for a medal — bronze, silver, gold.', W / 2, 488);
 
     const pulse = 0.6 + 0.4 * Math.sin(state.time * 3.4);
     ctx.globalAlpha = pulse;
     ctx.fillStyle = COLORS.gold;
     ctx.font = '700 26px system-ui, sans-serif';
-    ctx.fillText('Press ENTER or click to take off', W / 2, 486);
+    ctx.fillText('Press ENTER or click to take off', W / 2, 534);
     ctx.globalAlpha = 1;
+
+    let footY = 566;
+    if (record && record.owlUnlocked) {
+      ctx.fillStyle = '#a8d8ff';
+      ctx.font = '700 18px system-ui, sans-serif';
+      ctx.fillText('N — Night Owl: the endless night is yours', W / 2, footY);
+      footY += 26;
+    }
+    if (record) {
+      const counts = medalCounts(record.routes);
+      const total = counts.gold + counts.silver + counts.bronze;
+      if (total > 0) {
+        ctx.fillStyle = COLORS.inkDim;
+        ctx.font = '600 16px system-ui, sans-serif';
+        ctx.fillText(`Campaign medals: ${counts.gold} gold · ${counts.silver} silver · ${counts.bronze} bronze`, W / 2, footY);
+        footY += 24;
+      }
+    }
     if (best > 0) {
       ctx.fillStyle = COLORS.inkDim;
-      ctx.font = '600 17px system-ui, sans-serif';
-      ctx.fillText(`Best score so far: ${best}`, W / 2, 524);
+      ctx.font = '600 16px system-ui, sans-serif';
+      ctx.fillText(`Best score so far: ${best}`, W / 2, footY);
     }
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = '500 14px system-ui, sans-serif';
-    ctx.fillText('P pauses · M mutes', W / 2, 688);
+    ctx.fillText('C campaign & medals · P pauses · M mutes', W / 2, 688);
+  }
+
+  /** One medal disc: filled in its colour when earned, a hollow ring when not. */
+  function drawMedalDisc(x, y, medal, r = 11) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    if (medal) {
+      ctx.fillStyle = MEDAL_COLORS[medal];
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(10,12,30,0.45)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(x, y, r - 3.4, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = 'rgba(154,163,214,0.45)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+  }
+
+  /**
+   * The campaign screen: every route with its best score and the medal that score
+   * holds, the campaign's totals, and the Night Owl's lock or key. It is the map of
+   * the whole game on one screen — what there is, what it asks, and what is left.
+   */
+  function drawCampaign(state, record) {
+    ctx.fillStyle = 'rgba(5,7,20,0.62)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    drawEnvelope(W / 2, 74, 44, 31, COLORS.gold);
+    ctx.fillStyle = COLORS.goldBright;
+    ctx.font = '700 46px Georgia, serif';
+    ctx.fillText('THE CAMPAIGN', W / 2, 138);
+    ctx.fillStyle = COLORS.inkDim;
+    ctx.font = 'italic 18px Georgia, serif';
+    ctx.fillText('eight routes to dawn — fly them in order, draft after each, medal on every one', W / 2, 168);
+
+    const rec = record ?? { routes: [], wins: 0, owlUnlocked: false };
+    ROUTES.forEach((route, i) => {
+      const y = 216 + i * 47;
+      const slot = rec.routes[i] ?? { best: 0, medal: null };
+      if (i % 2 === 0) {
+        ctx.fillStyle = 'rgba(19,26,61,0.5)';
+        ctx.fillRect(W / 2 - 430, y - 26, 860, 42);
+      }
+      drawMedalDisc(W / 2 - 396, y - 5, slot.medal);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = COLORS.ink;
+      ctx.font = '700 19px system-ui, sans-serif';
+      const tag = route.finale ? ' — the finale' : route.weather === 'fog' ? ' — fog' : route.weather === 'rain' ? ' — rain' : route.festival ? ' — fireworks' : '';
+      ctx.fillText(`${i + 1}. ${route.name}${tag}`, W / 2 - 372, y);
+      ctx.fillStyle = COLORS.inkDim;
+      ctx.font = '600 15px system-ui, sans-serif';
+      ctx.fillText(`${route.quota} letters`, W / 2 + 96, y);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = slot.best > 0 ? COLORS.ink : 'rgba(154,163,214,0.55)';
+      ctx.font = '700 17px system-ui, sans-serif';
+      ctx.fillText(slot.best > 0 ? `best ${slot.best}` : 'not flown', W / 2 + 330, y);
+      ctx.fillStyle = slot.medal ? MEDAL_COLORS[slot.medal] : 'rgba(154,163,214,0.55)';
+      ctx.font = '700 14px system-ui, sans-serif';
+      ctx.fillText(slot.medal ? slot.medal.toUpperCase() : '—', W / 2 + 408, y);
+      ctx.textAlign = 'center';
+    });
+
+    const counts = medalCounts(rec.routes);
+    ctx.fillStyle = COLORS.ink;
+    ctx.font = '600 17px system-ui, sans-serif';
+    ctx.fillText(
+      `Medals held: ${counts.gold} gold · ${counts.silver} silver · ${counts.bronze} bronze   ·   Campaigns won: ${rec.wins}`,
+      W / 2, 612,
+    );
+    ctx.fillStyle = rec.owlUnlocked ? '#a8d8ff' : COLORS.inkDim;
+    ctx.font = rec.owlUnlocked ? '700 17px system-ui, sans-serif' : '600 17px system-ui, sans-serif';
+    ctx.fillText(
+      rec.owlUnlocked
+        ? 'Night Owl unlocked — press N on the title screen for the endless night'
+        : 'Win the campaign to unlock the Night Owl, the endless night',
+      W / 2, 642,
+    );
+    ctx.fillStyle = COLORS.inkDim;
+    ctx.font = '500 14px system-ui, sans-serif';
+    ctx.fillText('ENTER fly the campaign · C or ESC back to the title', W / 2, 688);
   }
 
   function drawPaused() {
@@ -510,17 +872,18 @@ export function createRenderer(canvas) {
     ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
     const flown = ROUTES[state.route];
-    const next = ROUTES[state.route + 1];
+    const next = ROUTES[(state.route + 1) % ROUTES.length];
     drawEnvelope(W / 2, 132, 40, 28, COLORS.gold);
     ctx.fillStyle = COLORS.goldBright;
     ctx.font = '700 42px Georgia, serif';
     ctx.fillText(`${flown.name} — route flown`, W / 2, 186);
     ctx.fillStyle = COLORS.ink;
     ctx.font = '600 19px system-ui, sans-serif';
-    ctx.fillText(`Route bonus +${state.draft.bonus}. Choose one upgrade for the rest of the campaign.`, W / 2, 224);
+    ctx.fillText(`Route bonus +${state.draft.bonus}. Choose one upgrade for the rest of the ${state.mode === 'owl' ? 'night' : 'campaign'}.`, W / 2, 224);
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = 'italic 17px Georgia, serif';
-    ctx.fillText(`Next: ${next.finale ? 'the Dawn Run' : `Night ${state.route + 2} · ${next.name}`} — ${next.blurb.toLowerCase()}`, W / 2, 254);
+    const nextLabel = next.finale && state.mode === 'campaign' ? 'the Dawn Run' : `Night ${state.night + 1} · ${next.name}`;
+    ctx.fillText(`Next: ${nextLabel} — ${next.blurb.toLowerCase()}`, W / 2, 254);
 
     state.draft.choices.forEach((id, i) => {
       const card = DRAFT_CARDS[i];
@@ -553,18 +916,26 @@ export function createRenderer(canvas) {
     }
   }
 
-  function drawOver(state, best, isNewBest) {
+  function drawOver(state, best, isNewBest, record) {
     ctx.fillStyle = 'rgba(5,7,20,0.45)';
     ctx.fillRect(0, 0, W, H);
     const won = state.overReason === 'win';
+    const owl = state.mode === 'owl';
     const rows = [
       ['Score', String(state.score)],
       ['Letters delivered', String(state.letters)],
       ['Best combo', `x${Math.max(1, state.bestCombo)}`],
-      ['Routes flown', `${won ? ROUTES.length : state.route} of ${ROUTES.length}`],
     ];
+    if (owl) rows.push(['Nights flown', String(state.night)]);
+    else rows.push(['Routes flown', `${won ? ROUTES.length : state.route} of ${ROUTES.length}`]);
     if (!won) rows.push(['Fell on', `Night ${state.night} · ${ROUTES[state.route].name}`]);
-    const panelH = 218 + rows.length * 40 + (state.upgrades.length > 0 ? 30 : 0) + (isNewBest ? 30 : 0);
+    const showMedals = !owl && state.routeResults.length > 0;
+    const showOwlLine = won && record && record.owlUnlocked;
+    const panelH = 218 + rows.length * 40
+      + (showMedals ? 58 : 0)
+      + (showOwlLine ? 28 : 0)
+      + (state.upgrades.length > 0 ? 30 : 0)
+      + (isNewBest ? 30 : 0);
     const top = 330 - panelH / 2;
     panel(W / 2 - 262, top, 524, panelH);
     ctx.textAlign = 'center';
@@ -576,9 +947,11 @@ export function createRenderer(canvas) {
     ctx.fillText(
       won
         ? 'Every route flown, the Dawn Run beaten — the mail is through.'
-        : state.overReason === 'dawn'
-          ? 'The moon set on the last letter.'
-          : 'A rooftop ended the round.',
+        : owl
+          ? 'The endless night closes over the plane.'
+          : state.overReason === 'dawn'
+            ? 'The moon set on the last letter.'
+            : 'A rooftop ended the round.',
       W / 2, top + 100,
     );
     ctx.font = '600 20px system-ui, sans-serif';
@@ -592,6 +965,25 @@ export function createRenderer(canvas) {
       ctx.fillText(value, W / 2 + 190, y);
     });
     let cursor = top + 154 + rows.length * 40;
+    if (showMedals) {
+      // This run's route medals, one disc per route in flight order, with the tally.
+      const results = state.routeResults;
+      const x0 = W / 2 - ((results.length - 1) * 34) / 2;
+      results.forEach((result, i) => drawMedalDisc(x0 + i * 34, cursor + 2, result.medal, 10));
+      const counts = medalCounts(results);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = COLORS.inkDim;
+      ctx.font = '600 14.5px system-ui, sans-serif';
+      ctx.fillText(`Route medals: ${counts.gold} gold · ${counts.silver} silver · ${counts.bronze} bronze`, W / 2, cursor + 30);
+      cursor += 58;
+    }
+    if (showOwlLine) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#a8d8ff';
+      ctx.font = '700 15.5px system-ui, sans-serif';
+      ctx.fillText('★ Night Owl unlocked — N on the title screen flies the endless night ★', W / 2, cursor + 4);
+      cursor += 28;
+    }
     if (state.upgrades.length > 0) {
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(255,207,107,0.9)';
@@ -616,13 +1008,21 @@ export function createRenderer(canvas) {
     ctx.globalAlpha = 1;
   }
 
-  /** Draw one frame. `screen` is the shell's screen; best/isNewBest describe the saved record. */
-  function draw(state, city, screen, best, isNewBest) {
+  /**
+   * Draw one frame. `screen` is the shell's screen; best/isNewBest describe the saved
+   * best score, and meta.record is the campaign record (medals, wins, the Owl's lock)
+   * the title, campaign and results screens read.
+   */
+  function draw(state, city, screen, best, isNewBest, meta = {}) {
+    const record = meta.record ?? null;
     drawSky(state);
     drawStars(state);
     drawMoon(state);
     drawFarSkyline(state);
+    drawMidSkyline(state);
+    drawFireworks(state);
     drawBuildings(state, city);
+    drawWeatherFronts(state);
     drawTarget(state);
     drawWindStreaks(state);
     drawStorm(state);
@@ -635,10 +1035,11 @@ export function createRenderer(canvas) {
       ctx.fillStyle = `rgba(255,90,70,${(state.flash * 0.32).toFixed(3)})`;
       ctx.fillRect(0, 0, W, H);
     }
-    if (screen === SCREEN_TITLE) drawTitle(state, best);
+    if (screen === SCREEN_TITLE) drawTitle(state, best, record);
+    else if (screen === SCREEN_CAMPAIGN) drawCampaign(state, record);
     else if (screen === SCREEN_PAUSED) drawPaused();
     else if (screen === SCREEN_DRAFT) drawDraft(state);
-    else if (screen === SCREEN_OVER) drawOver(state, best, isNewBest);
+    else if (screen === SCREEN_OVER) drawOver(state, best, isNewBest, record);
     // A soft vignette to close the frame.
     const vig = ctx.createRadialGradient(W / 2, H / 2, H * 0.42, W / 2, H / 2, H * 0.95);
     vig.addColorStop(0, 'rgba(0,0,10,0)');

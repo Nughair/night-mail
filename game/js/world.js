@@ -1,16 +1,21 @@
 // Night Mail's world: the whole simulation — the paper plane's flight, the scrolling city,
-// delivery targets, combos, wind gusts, the moon clock, collisions and particles — now flown
-// as a campaign: six routes from campaign.js in order, an upgrade draft between routes, and
-// a win when the Dawn Run's quota lands before its sunrise timer. It knows nothing about
-// drawing or sound; each step returns event flags so the shell can react.
+// delivery targets, combos, wind gusts, weather fronts, special deliveries, the moon clock,
+// collisions and particles — flown as a campaign: eight routes from campaign.js in order,
+// an upgrade draft between routes, a medal scored on every route, and a win when the Dawn
+// Run's quota lands before its sunrise timer. Winning unlocks the Night Owl, the same
+// districts cycled endlessly. It knows nothing about drawing or sound; each step returns
+// event flags so the shell can react.
 
 import {
   BASE_SPEED, COMBO_MAX, COMBO_WINDOW, DELIVERY_BASE, DELIVERY_REACH, DIVE, GRAVITY,
   GUST_EVERY_MAX, GUST_EVERY_MIN, GUST_SECONDS, LIFT, MAX_FALL, MAX_RISE, NEAR_MISS_POINTS,
   NIGHT_BONUS, PLANE_RADIUS, PLANE_X, VIEW,
 } from './config.js';
-import { FINAL_ROUTE, ROUTES, UPGRADES } from './campaign.js';
+import { FINAL_ROUTE, NIGHT_OWL, ROUTES, UPGRADES, routeWeatherNote } from './campaign.js';
 import { createCity } from './city.js';
+import { createWeather } from './weather.js';
+import { EXPRESS_SECONDS, assignSpecial, specialFactor } from './deliveries.js';
+import { medalForRoute } from './medals.js';
 
 /** Collisions use a slightly smaller circle than the drawing: skimming a roof should feel fair. */
 const HIT_RADIUS = 11;
@@ -30,9 +35,12 @@ export const EV_OVER = 16;
 export const EV_GUST = 32;
 export const EV_DRAFT = 64;
 export const EV_CLIP = 128;
+export const EV_LATE = 256;
+export const EV_FRAGILE = 512;
 
 export function createWorld(rng) {
   const city = createCity(rng);
+  const weather = createWeather(rng);
 
   const state = {
     phase: 'title', // 'title' | 'playing' | 'draft' | 'over'
@@ -63,6 +71,13 @@ export function createWorld(rng) {
     won: false,
     clipReady: false, // Reinforced Wings: this route's one survivable clip is still unused
     invulnT: 0, // seconds of post-clip grace left, during which rooftops cannot hurt
+    mode: 'campaign', // 'campaign' | 'owl' — the Owl cycles the routes without end
+    owlLoop: 0, // completed Owl loops: each one raises the quota and the pace a step
+    routeScore: 0, // points earned on the current route alone: the medal is scored on it
+    routeResults: [], // campaign only: { route, score, medal } per finished route
+    special: null, // the current target's special delivery (deliveries.js), or null
+    pendingSpecial: null, // a special kind forced for the next target (screenshot staging)
+    weather, // the fronts system (weather.js), stepped and read through the state
   };
 
   const route = () => ROUTES[state.route];
@@ -99,7 +114,7 @@ export function createWorld(rng) {
     state.banner = { text, sub, t: 0, dur: 2.4 };
   }
 
-  /** Set the run onto route `index`: its quota, moon budget, skyline density and clip. */
+  /** Set the run onto route `index`: quota, moon budget, skyline density, clip, weather. */
   function startRoute(index) {
     if (state.target) {
       city.clearTarget(state.target);
@@ -107,13 +122,16 @@ export function createWorld(rng) {
     }
     state.route = index;
     state.night = index + 1;
-    state.quota = route().quota;
+    state.quota = route().quota + (state.mode === 'owl' ? Math.min(3, state.owlLoop * NIGHT_OWL.quotaPerLoop) : 0);
     state.nightDelivered = 0;
     state.nightDuration = routeSeconds(index);
     state.nightTime = state.nightDuration;
     state.clipReady = has('sturdy');
     state.invulnT = 0;
+    state.routeScore = 0;
+    state.special = null;
     city.setDensity(route().density);
+    weather.beginRoute(route(), state.cameraX);
     state.gust.nextIn = rng.range(GUST_EVERY_MIN, GUST_EVERY_MAX) / route().wind;
   }
 
@@ -137,30 +155,79 @@ export function createWorld(rng) {
     state.upgrades = [];
     state.draft = null;
     state.won = false;
+    state.mode = 'campaign';
+    state.owlLoop = 0;
+    state.routeScore = 0;
+    state.routeResults = [];
+    state.special = null;
+    state.pendingSpecial = null;
     city.reset();
     startRoute(0);
+  }
+
+  /** The banner a route opens with: its name, its character, and its weather warning. */
+  function routeBanner() {
+    const note = routeWeatherNote(route());
+    showBanner(
+      `Night ${state.night} · ${route().name}`,
+      `${route().blurb} — deliver ${state.quota} letters${note ? `. ${note}` : ''}`,
+    );
   }
 
   /** Begin a run from the title or the results screen: everything back to Harbour Row. */
   function startRun() {
     reset();
     state.phase = 'playing';
-    showBanner(`Night 1 · ${route().name}`, `${route().blurb} — deliver ${state.quota} letters`);
+    routeBanner();
   }
 
-  /** The route is flown: open the upgrade draft, or, on the Dawn Run, win the campaign. */
+  /** Begin a Night Owl run: the endless night, from Harbour Row, with no dawn to beat. */
+  function startOwlRun() {
+    reset();
+    state.mode = 'owl';
+    state.phase = 'playing';
+    showBanner('The Night Owl', `${NIGHT_OWL.blurb} — deliver ${state.quota} letters`);
+  }
+
+  /** Fly on to the next route: the next district, or, in the Owl, the cycle's next turn. */
+  function advanceRoute() {
+    const prevNight = state.night;
+    let next = state.route + 1;
+    if (state.mode === 'owl' && next >= ROUTES.length) {
+      next = 0;
+      state.owlLoop += 1;
+    }
+    startRoute(next);
+    if (state.mode === 'owl') state.night = prevNight + 1;
+    state.phase = 'playing';
+    routeBanner();
+  }
+
+  /**
+   * The route is flown: score its medal, then open the upgrade draft — or, on the
+   * campaign's Dawn Run, win the campaign. In the Owl there is no last route: the
+   * draft (or, once every upgrade is aboard, the plain advance) just flies on.
+   */
   function routeCleared() {
     const bonus = NIGHT_BONUS * state.night;
     state.score += bonus;
-    if (state.route >= FINAL_ROUTE) {
-      state.won = true;
-      state.phase = 'over';
-      state.overReason = 'win';
-      burst(planeWorldX(), state.plane.y, 40, '#ffcf6b', 240, 220);
-      burst(planeWorldX(), state.plane.y, 18, '#fff3cf', 150, 160);
-      return EV_OVER;
+    if (state.mode === 'campaign') {
+      const medal = medalForRoute(state.routeScore, route(), state.route);
+      state.routeResults.push({ route: state.route, score: state.routeScore, medal });
+      if (state.route >= FINAL_ROUTE) {
+        state.won = true;
+        state.phase = 'over';
+        state.overReason = 'win';
+        burst(planeWorldX(), state.plane.y, 40, '#ffcf6b', 240, 220);
+        burst(planeWorldX(), state.plane.y, 18, '#fff3cf', 150, 160);
+        return EV_OVER;
+      }
     }
     const unowned = UPGRADES.filter((u) => !has(u.id)).map((u) => u.id);
+    if (unowned.length === 0) {
+      advanceRoute();
+      return 0;
+    }
     // Offer three of the upgrades not yet owned (fewer only when the pool runs dry).
     for (let i = unowned.length - 1; i > 0; i -= 1) {
       const j = rng.int(0, i);
@@ -176,29 +243,37 @@ export function createWorld(rng) {
     if (state.phase !== 'draft' || !state.draft || !state.draft.choices.includes(id)) return false;
     state.upgrades.push(id);
     state.draft = null;
-    startRoute(state.route + 1);
-    state.phase = 'playing';
-    showBanner(`Night ${state.night} · ${route().name}`, `${route().blurb} — deliver ${state.quota} letters`);
+    advanceRoute();
     return true;
   }
 
   function deliver() {
     const target = state.target;
+    const special = state.special;
     state.letters += 1;
     state.nightDelivered += 1;
     state.combo = Math.min(state.combo + 1, COMBO_MAX);
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     state.comboTimer = comboWindow();
-    const points = Math.round(DELIVERY_BASE * Math.max(1, state.combo) * (has('goldpost') ? GOLDPOST_FACTOR : 1));
+    const points = Math.round(
+      DELIVERY_BASE * Math.max(1, state.combo) * (has('goldpost') ? GOLDPOST_FACTOR : 1) * specialFactor(special),
+    );
     state.score += points;
+    state.routeScore += points;
     burst(target.x, target.y, 22, '#ffcf6b', 170, 190);
     burst(target.x, target.y, 8, '#fff3cf', 110, 140);
     floatText(target.x, target.y - 26, `+${points}`, '#ffe9a8', 23);
+    if (special && special.kind === 'express') {
+      floatText(target.x, target.y - 56, 'EXPRESS — on time!', '#ffb59d', 19);
+    } else if (special && special.kind === 'fragile') {
+      floatText(target.x, target.y - 56, 'Fragile — delivered whole', '#bcd2ff', 19);
+    }
     if (state.combo >= 2) {
       floatText(state.cameraX + PLANE_X, state.plane.y - 44, `COMBO x${state.combo}`, '#ffcf6b', 19);
     }
     city.clearTarget(target);
     state.target = null;
+    state.special = null;
     if (state.nightDelivered >= state.quota) return routeCleared();
     return 0;
   }
@@ -212,7 +287,11 @@ export function createWorld(rng) {
     burst(planeWorldX(), state.plane.y, 12, '#c9c2ae', 160, 150);
   }
 
-  /** Reinforced Wings spends its clip: a bounce off the roof instead of the end of the run. */
+  /**
+   * Reinforced Wings spends its clip: a bounce off the roof instead of the end of the
+   * run. A fragile letter aboard does not survive even this forgiven knock — it is
+   * voided where it breaks, and the step reports it (EV_FRAGILE) beside the clip.
+   */
   function clip() {
     state.clipReady = false;
     state.invulnT = 1.6;
@@ -222,6 +301,14 @@ export function createWorld(rng) {
     state.flash = 0.55;
     burst(planeWorldX(), state.plane.y, 14, '#f5f1e6', 170, 150);
     floatText(planeWorldX(), state.plane.y - 40, 'Clipped a roof — the wings hold!', '#ffe9a8', 19);
+    if (state.special && state.special.kind === 'fragile' && state.target) {
+      city.clearTarget(state.target);
+      state.target = null;
+      state.special = null;
+      floatText(planeWorldX(), state.plane.y - 72, 'The fragile letter broke!', '#bcd2ff', 19);
+      return EV_FRAGILE;
+    }
+    return 0;
   }
 
   function circleHitsRect(cx, cy, r, rect) {
@@ -235,8 +322,9 @@ export function createWorld(rng) {
   function stepPlaying(dt, control) {
     let events = 0;
     const plane = state.plane;
-    state.speed = BASE_SPEED + route().speed;
+    state.speed = BASE_SPEED + route().speed + (state.mode === 'owl' ? state.owlLoop * NIGHT_OWL.speedPerLoop : 0);
     state.cameraX += state.speed * dt;
+    weather.update(dt, state.cameraX);
     state.nightTime -= dt;
     if (state.nightTime <= 0) {
       state.nightTime = 0;
@@ -270,11 +358,13 @@ export function createWorld(rng) {
     }
     const gustPush = (240 + 60 * state.route) * route().wind * (has('tailwind') ? TAILWIND_GUST_KEEP : 1);
 
-    // Flight: gravity always pulls, holding climb fights it, dive adds to it, gusts shove.
+    // Flight: gravity always pulls, holding climb fights it, dive adds to it, gusts
+    // shove — and a rain band shoves for exactly as long as the plane is inside it.
     plane.vy += GRAVITY * dt;
     if (control.climb) plane.vy -= LIFT * (has('tailwind') ? TAILWIND_LIFT : 1) * dt;
     if (control.dive) plane.vy += DIVE * dt;
     if (gust.active) plane.vy += gust.dir * gustPush * dt;
+    plane.vy += weather.pushAt(planeWorldX()) * dt;
     plane.vy = Math.max(MAX_RISE, Math.min(MAX_FALL, plane.vy));
     plane.y += plane.vy * dt;
     if (plane.y < 30) {
@@ -282,14 +372,34 @@ export function createWorld(rng) {
       plane.vy = Math.max(plane.vy, 0);
     }
     plane.angle = (plane.vy / MAX_FALL) * 0.55;
-    plane.trail.push({ x: planeWorldX(), y: plane.y, life: 0.5 });
-    if (plane.trail.length > 16) plane.trail.shift();
+    plane.trail.push({ x: planeWorldX(), y: plane.y, life: 0.85 });
+    if (plane.trail.length > 26) plane.trail.shift();
 
     city.ensure(state.cameraX);
 
-    // The delivery target: keep one in play ahead of the plane.
+    // The delivery target: keep one in play ahead of the plane. A fresh target may be
+    // a special delivery (deliveries.js decides); an express one's clock runs from
+    // the moment its window is chosen, and a dead clock withdraws the letter.
     if (!state.target) {
       state.target = city.chooseTarget(planeWorldX() + 430);
+      if (state.target) {
+        state.special = state.pendingSpecial
+          ? { kind: state.pendingSpecial, t: EXPRESS_SECONDS }
+          : assignSpecial(rng, state.route, state.letters);
+        state.pendingSpecial = null;
+      }
+    }
+    if (state.target && state.special && state.special.kind === 'express') {
+      state.special.t -= dt;
+      if (state.special.t <= 0) {
+        city.clearTarget(state.target);
+        state.target = null;
+        state.special = null;
+        state.combo = 0;
+        state.comboTimer = 0;
+        floatText(planeWorldX(), plane.y - 40, 'Too late — the express letter is withdrawn', '#ffb59d', 17);
+        events |= EV_LATE;
+      }
     }
     if (state.target) {
       const dx = state.target.x - planeWorldX();
@@ -301,6 +411,7 @@ export function createWorld(rng) {
       } else if (state.target.x < planeWorldX() - 80) {
         city.clearTarget(state.target);
         state.target = null;
+        state.special = null;
         if (state.combo > 0) {
           state.combo = 0;
           state.comboTimer = 0;
@@ -323,8 +434,7 @@ export function createWorld(rng) {
         }
         if (hit) {
           if (state.clipReady) {
-            clip();
-            events |= EV_CLIP;
+            events |= EV_CLIP | clip();
           } else {
             crash();
             return events | EV_CRASH | EV_OVER;
@@ -334,6 +444,7 @@ export function createWorld(rng) {
       if (!building.nearMissed && plane.y + PLANE_RADIUS > building.topY - 30 && plane.y < building.topY - 2) {
         building.nearMissed = true;
         state.score += NEAR_MISS_POINTS;
+        state.routeScore += NEAR_MISS_POINTS;
         floatText(planeWorldX(), plane.y - 34, `+${NEAR_MISS_POINTS} close!`, '#e9ecff', 16);
         events |= EV_NEAR_MISS;
       }
@@ -348,8 +459,8 @@ export function createWorld(rng) {
     state.plane.vy = Math.cos(state.time * 1.25) * 30;
     state.plane.angle = Math.cos(state.time * 1.25) * 0.12;
     if (!state.plane.dead) {
-      state.plane.trail.push({ x: planeWorldX(), y: state.plane.y, life: 0.5 });
-      if (state.plane.trail.length > 16) state.plane.trail.shift();
+      state.plane.trail.push({ x: planeWorldX(), y: state.plane.y, life: 0.85 });
+      if (state.plane.trail.length > 26) state.plane.trail.shift();
     }
     city.ensure(state.cameraX);
   }
@@ -396,7 +507,12 @@ export function createWorld(rng) {
     state.phase = 'playing';
   }
 
+  /** Force the next target chosen to be a special delivery of the given kind. */
+  function forceNextSpecial(kind) {
+    state.pendingSpecial = kind;
+  }
+
   reset();
 
-  return { state, city, reset, startRun, step, pickUpgrade, jumpToRoute };
+  return { state, city, weather, reset, startRun, startOwlRun, step, pickUpgrade, jumpToRoute, forceNextSpecial };
 }
