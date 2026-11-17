@@ -6,6 +6,9 @@ export const ACTION_PAUSE = 2;
 export const ACTION_MUTE = 4;
 export const ACTION_CAMPAIGN = 8;
 export const ACTION_OWL = 16;
+export const ACTION_UP = 32;
+export const ACTION_DOWN = 64;
+export const ACTION_ERASE = 128;
 
 const CLIMB_CODES = new Set(['ArrowUp', 'KeyW', 'Space']);
 const DIVE_CODES = new Set(['ArrowDown', 'KeyS']);
@@ -30,6 +33,11 @@ export function createInput(canvas) {
     if (event.code === 'KeyM') queued |= ACTION_MUTE;
     if (event.code === 'KeyC') queued |= ACTION_CAMPAIGN;
     if (event.code === 'KeyN') queued |= ACTION_OWL;
+    // The campaign map's cursor: the arrows (and W/S) move the start-night pick.
+    // They are also flight keys, but on the map there is nothing flying to disturb.
+    if (event.code === 'ArrowUp' || event.code === 'KeyW') queued |= ACTION_UP;
+    if (event.code === 'ArrowDown' || event.code === 'KeyS') queued |= ACTION_DOWN;
+    if (event.code === 'KeyX') queued |= ACTION_ERASE;
     if (PICK_CODES.has(event.code)) picks.push(PICK_CODES.get(event.code));
   }
 

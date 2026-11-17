@@ -4,8 +4,10 @@
 // of chained combos. The thresholds scale with the route's quota, so a long district
 // asks proportionally more than a short one. The record this module keeps is the
 // player's standing across visits: the best score and best medal per route, campaigns
-// won, and whether the Night Owl has been unlocked. The world computes a run's medals
-// from these rules; the shell owns the record and saves it; the renderer draws both.
+// won, whether the Night Owl has been unlocked, the frontier — the furthest route a
+// new run may start from — every upgrade ever drafted into the postbag, and the
+// checkpoint of a campaign still in progress. The world computes a run's medals from
+// these rules; save.js persists the record; the renderer draws both.
 
 /** The medal names in ascending order; a medal's index in this list is its rank. */
 export const MEDALS = ['bronze', 'silver', 'gold'];
@@ -21,7 +23,7 @@ export const MEDAL_COLORS = { bronze: '#d08a4e', silver: '#cfd6ea', gold: '#ffcf
  * against the autopilot's crossings (shots.js): a careful pilot golds the routes it
  * flies cleanly, silvers the scrappy ones, and a poor crossing earns nothing.
  */
-const PAR_PER_LETTER_BY_ROUTE = [300, 380, 430, 460, 480, 520, 580, 620, 640, 660, 700, 620];
+const PAR_PER_LETTER_BY_ROUTE = [300, 380, 430, 460, 480, 520, 580, 570, 640, 580, 600, 540];
 const MEDAL_FRACTIONS = { bronze: 0.5, silver: 0.75, gold: 1.0 };
 
 /** The medal a route score earns on a route, or null when it earns none. */
@@ -34,12 +36,23 @@ export function medalForRoute(routeScore, route, routeIndex) {
   return null;
 }
 
-/** A fresh campaign record: no route flown, no campaign won, the Owl still locked. */
+/**
+ * A fresh campaign record: no route flown, no campaign won, the Owl still locked,
+ * the frontier at the first route, an empty postbag and no campaign in progress.
+ * `frontier` is the highest route index a new run may start from — it advances as
+ * routes are cleared, and the campaign map locks everything past it. `collected`
+ * holds the id of every upgrade ever drafted, in the order first collected: the
+ * postbag a returning pilot's map shows off. `checkpoint` is world.snapshot()'s
+ * shape — the campaign in progress, resumable from the title screen.
+ */
 export function createCampaignRecord(routeCount) {
   return {
     routes: Array.from({ length: routeCount }, () => ({ best: 0, medal: null })),
     wins: 0,
     owlUnlocked: false,
+    frontier: 0,
+    collected: [],
+    checkpoint: null,
   };
 }
 

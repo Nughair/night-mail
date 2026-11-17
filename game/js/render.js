@@ -6,7 +6,7 @@
 // it never changes it.
 
 import { COLORS, COMBO_WINDOW, PLANE_X, VIEW } from './config.js';
-import { DRAFT_CARDS, ROUTES, upgradeById } from './campaign.js';
+import { DRAFT_CARDS, ROUTES, campaignRowRect, upgradeById } from './campaign.js';
 import { EXPRESS_SECONDS, SPECIAL_LABELS } from './deliveries.js';
 import { MEDAL_COLORS, medalCounts } from './medals.js';
 import { createRandom } from './random.js';
@@ -892,22 +892,34 @@ export function createRenderer(canvas) {
     ctx.fillStyle = COLORS.ink;
     ctx.fillText('Hold  SPACE,  ↑  or the MOUSE  to climb — release to glide down', W / 2, 330);
     ctx.fillText('Slip a letter through each window that glows gold. Chain deliveries for combos.', W / 2, 362);
-    ctx.fillText('Mind the rooftops, the fog and the rain, and finish each route before the moon sets.', W / 2, 394);
+    ctx.fillText('Mind the rooftops, the beam and the doves, and finish each route before the moon sets.', W / 2, 394);
     ctx.fillStyle = COLORS.gold;
-    ctx.fillText('Eight routes before dawn — seven districts, then the Dawn Run. Draft an upgrade after every route.', W / 2, 428);
+    ctx.fillText('Twelve routes before dawn — eleven districts, then the Storm Warden. Draft an upgrade after every route.', W / 2, 428);
     ctx.fillStyle = COLORS.ink;
     ctx.fillText('Express letters pay double against the clock; fragile ones break on a single clip.', W / 2, 458);
     ctx.fillStyle = COLORS.inkDim;
-    ctx.fillText('Every route is scored for a medal — bronze, silver, gold.', W / 2, 488);
+    ctx.fillText('Every route is scored for a medal — and your progress is saved: medals, unlocks, the campaign itself.', W / 2, 488);
 
+    const checkpoint = record ? record.checkpoint : null;
     const pulse = 0.6 + 0.4 * Math.sin(state.time * 3.4);
     ctx.globalAlpha = pulse;
     ctx.fillStyle = COLORS.gold;
     ctx.font = '700 26px system-ui, sans-serif';
-    ctx.fillText('Press ENTER or click to take off', W / 2, 534);
+    ctx.fillText(
+      checkpoint
+        ? `Press ENTER to continue — Night ${checkpoint.route + 1} · ${ROUTES[checkpoint.route].name}`
+        : 'Press ENTER or click to take off',
+      W / 2, 534,
+    );
     ctx.globalAlpha = 1;
 
     let footY = 566;
+    if (checkpoint) {
+      ctx.fillStyle = COLORS.inkDim;
+      ctx.font = '600 16px system-ui, sans-serif';
+      ctx.fillText(`Campaign in progress — score ${checkpoint.score}, ${checkpoint.upgrades.length} upgrades aboard`, W / 2, footY);
+      footY += 24;
+    }
     if (record && record.owlUnlocked) {
       ctx.fillStyle = '#a8d8ff';
       ctx.font = '700 18px system-ui, sans-serif';
@@ -923,6 +935,12 @@ export function createRenderer(canvas) {
         ctx.fillText(`Campaign medals: ${counts.gold} gold · ${counts.silver} silver · ${counts.bronze} bronze`, W / 2, footY);
         footY += 24;
       }
+      if (record.frontier > 0 || record.collected.length > 0) {
+        ctx.fillStyle = COLORS.inkDim;
+        ctx.font = '600 16px system-ui, sans-serif';
+        ctx.fillText(`Nights unlocked: ${record.frontier + 1} of ${ROUTES.length} · Postbag: ${record.collected.length} of 6 upgrades collected`, W / 2, footY);
+        footY += 24;
+      }
     }
     if (best > 0) {
       ctx.fillStyle = COLORS.inkDim;
@@ -931,7 +949,7 @@ export function createRenderer(canvas) {
     }
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = '500 14px system-ui, sans-serif';
-    ctx.fillText('C campaign & medals · P pauses · M mutes', W / 2, 688);
+    ctx.fillText('C campaign map & save · P pauses · M mutes', W / 2, 688);
   }
 
   /** One medal disc: filled in its colour when earned, a hollow ring when not. */
@@ -953,68 +971,140 @@ export function createRenderer(canvas) {
     }
   }
 
+  /** A route's short hazard tag for the campaign map, or '' for a plain district. */
+  function routeTag(route) {
+    if (route.boss) return ' — THE WARDEN';
+    if (route.weather === 'fog') return ' — fog';
+    if (route.weather === 'rain') return ' — rain';
+    if (route.weather === 'beam') return ' — the beam';
+    if (route.weather === 'thermal') return ' — thermals';
+    if (route.mechanic === 'doves') return ' — doves';
+    if (route.ceiling) return ' — low deck';
+    if (route.festival) return ' — fireworks';
+    return '';
+  }
+
   /**
-   * The campaign screen: every route with its best score and the medal that score
-   * holds, the campaign's totals, and the Night Owl's lock or key. It is the map of
-   * the whole game on one screen — what there is, what it asks, and what is left.
+   * The campaign screen — the save, drawn. Twelve routes in two columns, each with
+   * its best score and the medal that score holds; routes past the frontier are
+   * locked and say what unlocks them; the picked start night wears a gold frame;
+   * and below the map, the campaign in progress (if any), the postbag of every
+   * upgrade ever collected, the totals, and the Night Owl's lock or key. It is the
+   * map of the whole game and the whole save on one screen.
    */
-  function drawCampaign(state, record) {
+  function drawCampaign(state, record, cursor) {
     ctx.fillStyle = 'rgba(5,7,20,0.62)';
     ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
-    drawEnvelope(W / 2, 74, 44, 31, COLORS.gold);
+    drawEnvelope(W / 2, 66, 44, 31, COLORS.gold);
     ctx.fillStyle = COLORS.goldBright;
-    ctx.font = '700 46px Georgia, serif';
-    ctx.fillText('THE CAMPAIGN', W / 2, 138);
+    ctx.font = '700 44px Georgia, serif';
+    ctx.fillText('THE CAMPAIGN', W / 2, 128);
     ctx.fillStyle = COLORS.inkDim;
-    ctx.font = 'italic 18px Georgia, serif';
-    ctx.fillText('eight routes to dawn — fly them in order, draft after each, medal on every one', W / 2, 168);
+    ctx.font = 'italic 17px Georgia, serif';
+    ctx.fillText('twelve routes to the Storm Warden — your medals, unlocks and postbag are saved', W / 2, 156);
 
-    const rec = record ?? { routes: [], wins: 0, owlUnlocked: false };
+    const rec = record ?? { routes: [], wins: 0, owlUnlocked: false, frontier: 0, collected: [], checkpoint: null };
+    const frontier = rec.frontier ?? 0;
+    const picked = Math.max(0, Math.min(cursor ?? frontier, frontier));
     ROUTES.forEach((route, i) => {
-      const y = 216 + i * 47;
+      const rect = campaignRowRect(i);
       const slot = rec.routes[i] ?? { best: 0, medal: null };
-      if (i % 2 === 0) {
-        ctx.fillStyle = 'rgba(19,26,61,0.5)';
-        ctx.fillRect(W / 2 - 430, y - 26, 860, 42);
+      const locked = i > frontier;
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(19,26,61,0.5)' : 'rgba(13,18,44,0.5)';
+      roundRect(rect.x, rect.y, rect.w, rect.h, 8);
+      ctx.fill();
+      if (i === picked && !locked) {
+        ctx.strokeStyle = COLORS.gold;
+        ctx.lineWidth = 2;
+        roundRect(rect.x, rect.y, rect.w, rect.h, 8);
+        ctx.stroke();
       }
-      drawMedalDisc(W / 2 - 396, y - 5, slot.medal);
+      ctx.globalAlpha = locked ? 0.45 : 1;
+      drawMedalDisc(rect.x + 27, rect.y + 28, slot.medal, 12);
       ctx.textAlign = 'left';
-      ctx.fillStyle = COLORS.ink;
-      ctx.font = '700 19px system-ui, sans-serif';
-      const tag = route.finale ? ' — the finale' : route.weather === 'fog' ? ' — fog' : route.weather === 'rain' ? ' — rain' : route.festival ? ' — fireworks' : '';
-      ctx.fillText(`${i + 1}. ${route.name}${tag}`, W / 2 - 372, y);
+      ctx.fillStyle = route.boss ? '#ffb59d' : COLORS.ink;
+      ctx.font = '700 17.5px system-ui, sans-serif';
+      ctx.fillText(`${i + 1}. ${route.name}${routeTag(route)}`, rect.x + 50, rect.y + 25);
       ctx.fillStyle = COLORS.inkDim;
-      ctx.font = '600 15px system-ui, sans-serif';
-      ctx.fillText(`${route.quota} letters`, W / 2 + 96, y);
+      ctx.font = '600 13px system-ui, sans-serif';
+      const detail = locked
+        ? `locked — clear Night ${i} to open this route`
+        : slot.best > 0
+          ? `${route.quota} letters · best ${slot.best}${slot.medal ? ` · ${slot.medal} medal` : ''}`
+          : `${route.quota} letters · not flown yet`;
+      ctx.fillText(detail, rect.x + 50, rect.y + 45);
+      ctx.globalAlpha = 1;
       ctx.textAlign = 'right';
-      ctx.fillStyle = slot.best > 0 ? COLORS.ink : 'rgba(154,163,214,0.55)';
-      ctx.font = '700 17px system-ui, sans-serif';
-      ctx.fillText(slot.best > 0 ? `best ${slot.best}` : 'not flown', W / 2 + 330, y);
-      ctx.fillStyle = slot.medal ? MEDAL_COLORS[slot.medal] : 'rgba(154,163,214,0.55)';
-      ctx.font = '700 14px system-ui, sans-serif';
-      ctx.fillText(slot.medal ? slot.medal.toUpperCase() : '—', W / 2 + 408, y);
+      if (locked) {
+        ctx.fillStyle = 'rgba(154,163,214,0.6)';
+        ctx.font = '700 12px system-ui, sans-serif';
+        ctx.fillText('LOCKED', rect.x + rect.w - 14, rect.y + 24);
+      } else if (i === picked) {
+        ctx.fillStyle = COLORS.gold;
+        ctx.font = '700 12.5px system-ui, sans-serif';
+        ctx.fillText('▶ START HERE', rect.x + rect.w - 14, rect.y + 24);
+      } else if (rec.checkpoint && rec.checkpoint.route === i) {
+        ctx.fillStyle = '#a8d8ff';
+        ctx.font = '700 12.5px system-ui, sans-serif';
+        ctx.fillText('IN PROGRESS', rect.x + rect.w - 14, rect.y + 24);
+      }
       ctx.textAlign = 'center';
     });
 
+    let lineY = 592;
+    if (rec.checkpoint) {
+      const cp = rec.checkpoint;
+      ctx.fillStyle = '#a8d8ff';
+      ctx.font = '700 16px system-ui, sans-serif';
+      ctx.fillText(
+        `Campaign in progress: Night ${cp.route + 1} · ${ROUTES[cp.route].name} — score ${cp.score}, ${cp.upgrades.length} upgrades aboard · ENTER on the title continues it`,
+        W / 2, lineY,
+      );
+      lineY += 24;
+    }
     const counts = medalCounts(rec.routes);
     ctx.fillStyle = COLORS.ink;
-    ctx.font = '600 17px system-ui, sans-serif';
+    ctx.font = '600 16px system-ui, sans-serif';
     ctx.fillText(
       `Medals held: ${counts.gold} gold · ${counts.silver} silver · ${counts.bronze} bronze   ·   Campaigns won: ${rec.wins}`,
-      W / 2, 612,
+      W / 2, lineY,
     );
+    lineY += 24;
+    // The postbag: every upgrade ever drafted, gold when collected, dim when not.
+    ctx.font = '600 14.5px system-ui, sans-serif';
+    ctx.fillStyle = COLORS.inkDim;
+    const postbagLabel = 'Postbag: ';
+    const names = ['Tailwind Charm', 'Bigger Mailbag', 'Patient Postmark', 'Reinforced Wings', 'Lantern Oil', 'Golden Postage'];
+    const ids = ['tailwind', 'widebag', 'longcombo', 'sturdy', 'lampoil', 'goldpost'];
+    let postbagX = W / 2 - ctx.measureText(postbagLabel + names.join(' · ')).width / 2;
+    ctx.textAlign = 'left';
+    ctx.fillText(postbagLabel, postbagX, lineY);
+    postbagX += ctx.measureText(postbagLabel).width;
+    names.forEach((name, i) => {
+      const owned = (rec.collected ?? []).includes(ids[i]);
+      ctx.fillStyle = owned ? COLORS.gold : 'rgba(154,163,214,0.45)';
+      ctx.fillText(name, postbagX, lineY);
+      postbagX += ctx.measureText(name).width;
+      if (i < names.length - 1) {
+        ctx.fillStyle = 'rgba(154,163,214,0.45)';
+        ctx.fillText(' · ', postbagX, lineY);
+        postbagX += ctx.measureText(' · ').width;
+      }
+    });
+    ctx.textAlign = 'center';
+    lineY += 24;
     ctx.fillStyle = rec.owlUnlocked ? '#a8d8ff' : COLORS.inkDim;
-    ctx.font = rec.owlUnlocked ? '700 17px system-ui, sans-serif' : '600 17px system-ui, sans-serif';
+    ctx.font = rec.owlUnlocked ? '700 15.5px system-ui, sans-serif' : '600 15.5px system-ui, sans-serif';
     ctx.fillText(
       rec.owlUnlocked
         ? 'Night Owl unlocked — press N on the title screen for the endless night'
-        : 'Win the campaign to unlock the Night Owl, the endless night',
-      W / 2, 642,
+        : 'Beat the Storm Warden to unlock the Night Owl, the endless night',
+      W / 2, lineY,
     );
     ctx.fillStyle = COLORS.inkDim;
-    ctx.font = '500 14px system-ui, sans-serif';
-    ctx.fillText('ENTER fly the campaign · C or ESC back to the title', W / 2, 688);
+    ctx.font = '500 13.5px system-ui, sans-serif';
+    ctx.fillText('↑ ↓ or click to choose a start night · ENTER fly from there · X erase the save · C back', W / 2, 692);
   }
 
   function drawPaused() {
@@ -1065,7 +1155,7 @@ export function createRenderer(canvas) {
     ctx.fillText(`Route bonus +${state.draft.bonus}. Choose one upgrade for the rest of the ${state.mode === 'owl' ? 'night' : 'campaign'}.`, W / 2, 224);
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = 'italic 17px Georgia, serif';
-    const nextLabel = next.finale && state.mode === 'campaign' ? 'the Dawn Run' : `Night ${state.night + 1} · ${next.name}`;
+    const nextLabel = next.boss && state.mode === 'campaign' ? 'Night 12 · the Storm Warden' : `Night ${state.night + 1} · ${next.name}`;
     ctx.fillText(`Next: ${nextLabel} — ${next.blurb.toLowerCase()}`, W / 2, 254);
 
     state.draft.choices.forEach((id, i) => {
@@ -1110,7 +1200,7 @@ export function createRenderer(canvas) {
       ['Best combo', `x${Math.max(1, state.bestCombo)}`],
     ];
     if (owl) rows.push(['Nights flown', String(state.night)]);
-    else rows.push(['Routes flown', `${won ? ROUTES.length : state.route} of ${ROUTES.length}`]);
+    else rows.push(['Routes flown', `${state.routeResults.length} of ${ROUTES.length}`]);
     if (!won) rows.push(['Fell on', `Night ${state.night} · ${ROUTES[state.route].name}`]);
     const showMedals = !owl && state.routeResults.length > 0;
     const showOwlLine = won && record && record.owlUnlocked;
@@ -1124,12 +1214,12 @@ export function createRenderer(canvas) {
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.goldBright;
     ctx.font = '700 45px Georgia, serif';
-    ctx.fillText(won ? 'The City Wakes' : state.overReason === 'dawn' ? 'Dawn Breaks' : 'Down in the Streets', W / 2, top + 68);
+    ctx.fillText(won ? 'The Warden Yields' : state.overReason === 'dawn' ? 'Dawn Breaks' : 'Down in the Streets', W / 2, top + 68);
     ctx.fillStyle = COLORS.inkDim;
     ctx.font = 'italic 18px Georgia, serif';
     ctx.fillText(
       won
-        ? 'Every route flown, the Dawn Run beaten — the mail is through.'
+        ? 'The Storm Warden’s lantern is dark, the last letter is through — the city wakes.'
         : owl
           ? 'The endless night closes over the plane.'
           : state.overReason === 'dawn'
@@ -1221,7 +1311,7 @@ export function createRenderer(canvas) {
       ctx.fillRect(0, 0, W, H);
     }
     if (screen === SCREEN_TITLE) drawTitle(state, best, record);
-    else if (screen === SCREEN_CAMPAIGN) drawCampaign(state, record);
+    else if (screen === SCREEN_CAMPAIGN) drawCampaign(state, record, meta.cursor ?? (record ? record.frontier : 0));
     else if (screen === SCREEN_PAUSED) drawPaused();
     else if (screen === SCREEN_DRAFT) drawDraft(state);
     else if (screen === SCREEN_OVER) drawOver(state, best, isNewBest, record);
